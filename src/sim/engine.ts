@@ -152,6 +152,11 @@ export function transmit(
   input: string,
   frequency: Frequency,
 ): { session: Session; error?: string } {
+  if (input.length > 1000) {
+    const error =
+      'Transmission exceeds the 1,000-character limit. Shorten the instruction; it was not transmitted.'
+    return { session: record(session, 'instructor', error, { severity: 'attention' }), error }
+  }
   const parsed = parseTransmission(input, session.aircraft)
   let s = { ...session, aircraft: copyAircraft(session.aircraft), attempted: session.attempted + 1 }
   s = record(s, 'controller', input.trim(), { frequency })

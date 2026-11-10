@@ -21,7 +21,7 @@
 
 Checkpoints use IndexedDB on the current website origin. The latest compatible record is recovered paused; unreadable records remain stored. Changes since the last committed checkpoint can be lost if the tab closes during a save. Storage errors remain visible and the user can continue training and export JSON. Browser data clearing, another browser/device, or another preview domain does not share the checkpoint library. No records are silently pruned.
 
-Import is bounded to 10 MB and 2,500 events. Structural validation does not authenticate a record or make it assessment evidence. Export independent copies when retention matters. Editing the same recovered session in multiple tabs is not supported in this local prototype.
+File import is bounded to 10 MB and 2,500 events. This file-ingestion limit is not applied to browser checkpoint recovery or restoration. Typed transmissions over 1,000 characters are rejected without recording the oversized payload, so they cannot invalidate a checkpoint. Structural validation does not authenticate a record or make it assessment evidence. Export independent copies when retention matters. Editing the same recovered session in multiple tabs is not supported in this local prototype.
 
 ## Remaining fidelity work
 

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { createSession, sessionExport } from '../src/sim/engine'
+import { createSession, sessionExport, transmit } from '../src/sim/engine'
 
 test('controller selects an aircraft, transmits, and inspects a historical snapshot', async ({
   page,
@@ -210,4 +210,70 @@ test('compact desktop keeps the transmission box above the status bar after reco
   const command = await page.locator('.command-form').boundingBox()
   const footer = await page.locator('.status-bar').boundingBox()
   expect(command!.y + command!.height).toBeLessThanOrEqual(footer!.y)
+})
+
+test('oversized transmission is rejected and its checkpoint still recovers', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
+  await page
+    .getByRole('textbox', { name: 'Controller transmission' })
+    .fill(`MAS612, ${'x'.repeat(5000)}`)
+  await page.getByRole('button', { name: 'Transmit clearance' }).click()
+  await expect(page.getByRole('alert')).toContainText('1,000-character limit')
+  await expect(page.getByRole('button', { name: 'Local save status' })).toContainText(
+    'SAVED LOCALLY',
+  )
+  await page.reload()
+  await expect(
+    page.getByText('Previous exercise restored paused. Resume when you are ready.'),
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Select MAS612' })).toContainText('AT STAND')
+})
+
+test('browser history beyond the file-import limit can recover and restore independently', async ({
+  page,
+}) => {
+  let long = createSession('departure')
+  for (let i = 0; i < 1250; i++) long = transmit(long, 'MAS612, standby', '121.650').session
+  const envelope = sessionExport(long)
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: 'Local save status' })).toContainText(
+    'SAVED LOCALLY',
+  )
+  await page.evaluate(async (envelope) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('vatsim-ai-workstation', 1)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction('sessions', 'readwrite')
+      transaction.objectStore('sessions').put({
+        id: envelope.session.id,
+        savedAt: new Date().toISOString(),
+        scenarioId: envelope.session.scenarioId,
+        elapsed: envelope.session.time,
+        eventCount: envelope.session.events.length,
+        envelope,
+      })
+      transaction.oncomplete = () => {
+        db.close()
+        resolve()
+      }
+      transaction.onabort = () => {
+        db.close()
+        reject(transaction.error)
+      }
+    })
+  }, envelope)
+  await page.reload()
+  await expect(
+    page.getByText('Previous exercise restored paused. Resume when you are ready.'),
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: /WMKK–02 Departure fundamentals/ })).toBeVisible()
+  await page.getByRole('button', { name: 'Saved sessions', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText(`${long.events.length + 1} events`)
+  await page.getByRole('button', { name: 'Restore Departure fundamentals', exact: true }).click()
+  await page.getByRole('button', { name: 'Restore paused', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Start exercise', exact: true })).toBeEnabled()
 })

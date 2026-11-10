@@ -135,7 +135,10 @@ function fleet(value: unknown, expected: string[]): Aircraft[] {
   return list
 }
 
-export function decodeSession(value: unknown): DecodedSession {
+export function decodeSession(
+  value: unknown,
+  source: 'file' | 'checkpoint' = 'file',
+): DecodedSession {
   if (
     !object(value) ||
     !['vatsim-ai.session.v1', 'vatsim-ai.session.v2'].includes(value.schema as string)
@@ -167,16 +170,23 @@ export function decodeSession(value: unknown): DecodedSession {
     (raw.blockedRunway !== null && !runway(raw.blockedRunway))
   )
     fail('invalid clock or instructor settings.')
+  // File ingestion is bounded. Locally produced history must remain recoverable
+  // after an exercise grows beyond the portable-file import limit.
+  const historyLimit = source === 'checkpoint' ? 1e8 : 2500
   if (
     !integer(raw.completed, 16) ||
-    !integer(raw.attempted, 2500) ||
+    !integer(raw.attempted, historyLimit) ||
     !integer(raw.accepted, raw.attempted) ||
     !integer(raw.nextEventId) ||
     !Array.isArray(raw.events) ||
     raw.events.length < 1 ||
-    raw.events.length > 2500
+    raw.events.length > historyLimit
   )
-    fail('invalid counters or event history; maximum 2,500 events per imported record.')
+    fail(
+      source === 'file'
+        ? 'invalid counters or event history; maximum 2,500 events per imported record.'
+        : 'invalid checkpoint counters or event history.',
+    )
   const ids = initialAircraft(raw.scenarioId as string).map((a) => a.id)
   const current = fleet(raw.aircraft, ids)
   let lastId = 0

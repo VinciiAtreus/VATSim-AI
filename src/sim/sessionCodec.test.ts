@@ -7,6 +7,21 @@ function fixture() {
 }
 
 describe('session interchange', () => {
+  it('recovers long local checkpoints while retaining the file-import history limit', () => {
+    let s = createSession('departure')
+    for (let i = 0; i < 1250; i++) s = transmit(s, 'MAS612, standby', '121.650').session
+    const data = sessionExport(s)
+    expect(data.session.events.length).toBeGreaterThan(2500)
+    expect(() => decodeSession(data)).toThrow(/2,500/)
+    expect(decodeSession(data, 'checkpoint').session.events).toHaveLength(s.events.length)
+  })
+  it('rejects oversized transmissions without creating an unreadable checkpoint', () => {
+    const result = transmit(createSession(), `MAS612, ${'x'.repeat(5000)}`, '121.650')
+    expect(result.error).toMatch(/1,000/)
+    expect(() => decodeSession(sessionExport(result.session))).not.toThrow()
+    expect(result.session.attempted).toBe(0)
+    expect(result.session.events.at(-1)?.kind).toBe('instructor')
+  })
   it('round-trips current state, historical snapshots, and pending discrepancies', () => {
     let s = createSession('readback')
     s = transmit(s, 'MAS612, pushback approved', '121.650').session

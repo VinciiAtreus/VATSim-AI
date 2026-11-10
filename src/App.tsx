@@ -370,7 +370,7 @@ export default function App() {
   }
   function prepareRestore(saved: SavedSession) {
     try {
-      const decoded = decodeSession(saved.envelope)
+      const decoded = decodeSession(saved.envelope, 'checkpoint')
       setPendingRestore({ ...decoded, source: 'Browser checkpoint' })
       setModal('restore')
     } catch (error) {

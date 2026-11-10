@@ -92,7 +92,7 @@ export async function recoverSession(): Promise<{ session: Session | null; warni
   let skipped = 0
   for (const record of records) {
     try {
-      const decoded = decodeSession(record.envelope)
+      const decoded = decodeSession(record.envelope, 'checkpoint')
       return {
         session: decoded.session,
         warning: skipped
