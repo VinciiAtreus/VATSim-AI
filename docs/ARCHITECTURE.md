@@ -21,7 +21,7 @@ Session engine ──► aircraft state + scripted readback + event snapshot
 - `src/sim/parser.ts`: constrained grammar; unknown or conflicting instructions are not guessed.
 - `src/sim/engine.ts`: immutable session updates, motion along routes, radio ownership, scripted readbacks, instructor events, and historical snapshots.
 - `src/components/AirportMap.tsx`: display geometry, layers, route overlay, pan/zoom and selection.
-- `src/sim/sessionCodec.ts`: bounded JSON validation and version 0.1 migration.
+- `src/sim/sessionCodec.ts`: bounded JSON validation and version 0.1/0.2 migration.
 - `src/storage/sessionStore.ts`: transactional IndexedDB checkpoints.
 - `src/hooks/useSession.ts`: startup recovery, serialized saves, storage status and save retry.
 - `src/components/SessionLibrary.tsx`: checkpoint library and import controls.
@@ -64,6 +64,14 @@ Recorded events and pauses trigger autosave; movement is checkpointed approximat
 
 Manual restore/import validates the record before replacement, checkpoints the current exercise when storage is available, and forks the restored record under a fresh ID. Original checkpoints remain. Portable file import limits: 10 MB, 2,500 events, known dataset/scenario/engine version, finite movement values, valid radio/runway/phase data, consistent counters, ordered event IDs/times, and valid historical snapshots. Version 0.1 airborne landing states are migrated to the version 0.2 approach model; historical facts are retained. Record structure is validated; authenticity is not established.
 
-Export format: `vatsim-ai.session.v2`, engine `0.2.0`, dataset `wmkk-schematic-0.1`. No recorded audio, database authentication, or formal assessment evidence is provided.
+Current export format: `vatsim-ai.session.v3`, engine `0.3.0`, dataset `wmkk-schematic-0.1`. No recorded audio, database authentication, or formal assessment evidence is provided.
 
 Browser checkpoint recovery and library restoration validate the same structure without the portable file-import history cap, so an exercise exceeding 2,500 events remains recoverable. The transmission engine rejects inputs exceeding 1,000 characters before recording their contents; a bounded instructor observation records the rejection.
+
+## Instructor control contract (version 0.3)
+
+Each aircraft records its pilot mode, individual motion freeze, and optional queued controller instruction. Scripted mode applies supported instructions immediately. Operator mode queues them against the original controller event; execution revalidates current phase, frequency, and occupancy without recording a second trainee transmission. Decline, replacement, takeover, release, freeze, and execution are audited. Returning to scripted mode cancels a pending instruction and releases a freeze. Custom pilot calls are bounded radio-only events. Routine scripted reports become system report-due events during takeover; the approach decision policy continues for moving aircraft.
+
+Pilot events include scripted/operator attribution. Instructor observations are separate note events linked to an earlier non-note event, with creation time retained separately from the target's timestamp. Replay follows that link to its historical snapshot. The codec checks these references and queued transmission identity, including historical snapshots. Version 0.2 checkpoints retain their IDs and gain scripted defaults. Version 0.1 uses the existing approach migration as well.
+
+`PilotStation.tsx` and `ObservationEditor.tsx` provide the local instructor controls. These are workstation roles, without authentication or multiuser isolation. See [release 0.3](RELEASE_0_3.md) for limitations and a review walkthrough.

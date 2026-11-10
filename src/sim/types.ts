@@ -41,8 +41,11 @@ export type Aircraft = {
   discrepancy?: { issued: RunwayId; readback: RunwayId }
   landingCleared?: boolean
   approachCallMade?: boolean
+  pilotMode: 'scripted' | 'operator'
+  motionPaused: boolean
+  queuedInstruction?: { eventId: number; text: string; frequency: Frequency }
 }
-export type EventKind = 'system' | 'controller' | 'pilot' | 'instructor'
+export type EventKind = 'system' | 'controller' | 'pilot' | 'instructor' | 'operator' | 'note'
 export type SimEvent = {
   id: number
   time: number
@@ -51,11 +54,13 @@ export type SimEvent = {
   text: string
   severity: 'info' | 'attention' | 'critical'
   frequency?: Frequency
+  source?: 'scripted' | 'operator'
+  relatedEventId?: number
   snapshot: Aircraft[]
   blockedRunway: RunwayId | null
 }
 export type Session = {
-  version: 2
+  version: 3
   id: string
   scenarioId: string
   time: number

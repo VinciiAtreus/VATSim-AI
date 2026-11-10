@@ -17,13 +17,16 @@ export function copyAircraft(aircraft: Aircraft[]): Aircraft[] {
     position: { ...a.position },
     route: a.route.map((p) => ({ ...p })),
     discrepancy: a.discrepancy ? { ...a.discrepancy } : undefined,
+    queuedInstruction: a.queuedInstruction ? { ...a.queuedInstruction } : undefined,
   }))
 }
 export function record(
   session: Session,
   kind: SimEvent['kind'],
   text: string,
-  options: Partial<Pick<SimEvent, 'aircraftId' | 'severity' | 'frequency'>> = {},
+  options: Partial<
+    Pick<SimEvent, 'aircraftId' | 'severity' | 'frequency' | 'source' | 'relatedEventId'>
+  > = {},
 ): Session {
   const event: SimEvent = {
     id: session.nextEventId,
@@ -31,6 +34,7 @@ export function record(
     kind,
     text,
     severity: 'info',
+    ...(kind === 'pilot' ? { source: 'scripted' as const } : {}),
     ...options,
     snapshot: copyAircraft(session.aircraft),
     blockedRunway: session.blockedRunway,
@@ -40,7 +44,7 @@ export function record(
 export function createSession(scenarioId = 'morning'): Session {
   const validId = SCENARIOS.some((s) => s.id === scenarioId) ? scenarioId : 'morning'
   let s: Session = {
-    version: 2,
+    version: 3,
     id: crypto.randomUUID(),
     scenarioId: validId,
     time: 0,
@@ -159,7 +163,10 @@ export function transmit(
   }
   const parsed = parseTransmission(input, session.aircraft)
   let s = { ...session, aircraft: copyAircraft(session.aircraft), attempted: session.attempted + 1 }
-  s = record(s, 'controller', input.trim(), { frequency })
+  s = record(s, 'controller', input.trim(), {
+    frequency,
+    aircraftId: parsed.ok ? parsed.command.aircraftId : undefined,
+  })
   if (!parsed.ok) {
     s = record(s, 'instructor', parsed.error, { severity: 'attention' })
     return { session: s, error: parsed.error }
@@ -171,6 +178,27 @@ export function transmit(
     s = record(s, 'instructor', error, { aircraftId: a.id, severity: 'attention' })
     return { session: s, error }
   }
+  if (a.pilotMode === 'operator') {
+    const previous = a.queuedInstruction?.eventId
+    a.queuedInstruction = { eventId: s.events.at(-1)!.id, text: input.trim(), frequency }
+    return {
+      session: record(
+        s,
+        'operator',
+        `${a.id}: instruction #${a.queuedInstruction.eventId} awaiting pseudo-pilot execution.${previous ? ` Replaces unexecuted instruction #${previous}.` : ''}`,
+        { aircraftId: a.id },
+      ),
+    }
+  }
+  return applyCommand(s, a, c, frequency)
+}
+
+function applyCommand(
+  s: Session,
+  a: Aircraft,
+  c: Command,
+  frequency: Frequency,
+): { session: Session } {
   const r = RUNWAYS[a.runway]
   a.pending = false
   a.overdueReported = false
@@ -186,7 +214,7 @@ export function transmit(
       const taxiX = r.hold.x
       setRoute(a, [{ x: taxiX, y: a.position.y }, { ...r.hold }])
       a.clearance = `Taxi via ${c.via} · hold short ${a.runway}`
-      if (s.injectReadback) {
+      if (s.injectReadback && a.pilotMode === 'scripted') {
         const wrong: RunwayId = a.runway === '32R' ? '32L' : '32R'
         a.discrepancy = { issued: a.runway, readback: wrong }
         a.phase = 'stopped'
@@ -262,7 +290,7 @@ export function transmit(
       break
   }
   s = { ...s, accepted: s.accepted + 1 }
-  s = record(s, 'pilot', readback, { aircraftId: a.id, frequency })
+  s = record(s, 'pilot', readback, { aircraftId: a.id, frequency, source: a.pilotMode })
   if (a.discrepancy)
     s = record(
       s,
@@ -302,6 +330,163 @@ function advance(a: Aircraft, distance: number) {
   }
 }
 
+export function setPilotMode(
+  session: Session,
+  aircraftId: string,
+  mode: Aircraft['pilotMode'],
+): Session {
+  const original = session.aircraft.find((a) => a.id === aircraftId)
+  if (
+    !original ||
+    original.pilotMode === mode ||
+    (mode === 'operator' && original.phase === 'complete')
+  )
+    return session
+  const s = { ...session, aircraft: copyAircraft(session.aircraft) }
+  const a = s.aircraft.find((item) => item.id === aircraftId)!
+  const cancelled = a.queuedInstruction?.eventId
+  a.pilotMode = mode
+  a.motionPaused = false
+  delete a.queuedInstruction
+  return record(
+    s,
+    'operator',
+    mode === 'operator'
+      ? `${a.id}: pseudo-pilot takeover. New controller instructions require execution; automatic routine radio calls suppressed. Existing motion and the approach decision policy continue unless frozen.`
+      : `${a.id}: returned to scripted pilot; motion resumed.${cancelled ? ` Unexecuted instruction #${cancelled} cancelled.` : ''}`,
+    { aircraftId },
+  )
+}
+
+export function setAircraftMotionPaused(
+  session: Session,
+  aircraftId: string,
+  paused: boolean,
+): Session {
+  const original = session.aircraft.find((a) => a.id === aircraftId)
+  if (
+    !original ||
+    original.pilotMode !== 'operator' ||
+    original.phase === 'complete' ||
+    original.motionPaused === paused
+  )
+    return session
+  const s = { ...session, aircraft: copyAircraft(session.aircraft) }
+  const a = s.aircraft.find((item) => item.id === aircraftId)!
+  a.motionPaused = paused
+  if (paused) a.speed = 0
+  return record(
+    s,
+    'operator',
+    `${a.id}: motion ${paused ? 'frozen by instructor; runway occupancy retained' : 'resumed by instructor'}.`,
+    { aircraftId, severity: paused ? 'attention' : 'info' },
+  )
+}
+
+export function resolvePilotInstruction(
+  session: Session,
+  aircraftId: string,
+  execute: boolean,
+): { session: Session; error?: string } {
+  const s = { ...session, aircraft: copyAircraft(session.aircraft) }
+  const a = s.aircraft.find((item) => item.id === aircraftId)
+  if (!a || a.pilotMode !== 'operator' || !a.queuedInstruction)
+    return { session, error: 'No instruction awaiting pseudo-pilot execution.' }
+  if (!session.running)
+    return { session, error: 'Resume the exercise before resolving a pilot instruction.' }
+  const queued = a.queuedInstruction
+  if (!execute) {
+    delete a.queuedInstruction
+    const next = record(
+      s,
+      'operator',
+      `${a.id}: instruction #${queued.eventId} declined; aircraft clearance unchanged.`,
+      { aircraftId, relatedEventId: queued.eventId },
+    )
+    if (a.phase === 'complete' || a.frequency !== queued.frequency) return { session: next }
+    return {
+      session: record(next, 'pilot', `Unable, ${a.spoken}.`, {
+        aircraftId,
+        frequency: queued.frequency,
+        source: 'operator',
+      }),
+    }
+  }
+  const parsed = parseTransmission(queued.text, s.aircraft)
+  const error = parsed.ok
+    ? parsed.command.aircraftId !== a.id
+      ? 'Queued instruction targets a different aircraft.'
+      : validate(s, a, parsed.command, queued.frequency)
+    : parsed.error
+  if (error || !parsed.ok)
+    return {
+      session: record(s, 'operator', `Instruction #${queued.eventId} not executed: ${error}`, {
+        aircraftId,
+        severity: 'attention',
+        relatedEventId: queued.eventId,
+      }),
+      error: error ?? 'Instruction cannot be executed.',
+    }
+  delete a.queuedInstruction
+  return applyCommand(
+    record(s, 'operator', `${a.id}: executing instruction #${queued.eventId}.`, {
+      aircraftId,
+      relatedEventId: queued.eventId,
+    }),
+    a,
+    parsed.command,
+    queued.frequency,
+  )
+}
+
+export function sendPilotCall(
+  session: Session,
+  aircraftId: string,
+  text: string,
+): { session: Session; error?: string } {
+  const a = session.aircraft.find((item) => item.id === aircraftId)
+  if (!a || a.pilotMode !== 'operator' || a.phase === 'complete')
+    return { session, error: 'Take over an active aircraft before sending a pilot call.' }
+  if (!session.running)
+    return { session, error: 'Resume the exercise before sending a pilot call.' }
+  if (!text.trim() || text.length > 1000)
+    return { session, error: 'Pilot calls must contain 1–1,000 characters.' }
+  // Radio-only: arbitrary dialogue never changes a clearance or creates a route.
+  return {
+    session: record(session, 'pilot', text.trim(), {
+      aircraftId,
+      frequency: a.frequency,
+      source: 'operator',
+    }),
+  }
+}
+
+export function addObservation(
+  session: Session,
+  eventId: number,
+  text: string,
+  severity: SimEvent['severity'],
+): { session: Session; error?: string } {
+  const target = session.events.find((e) => e.id === eventId)
+  if (!target || target.kind === 'note')
+    return { session, error: 'Select a recorded exercise event to annotate.' }
+  if (!text.trim() || text.length > 1000)
+    return { session, error: 'Observations must contain 1–1,000 characters.' }
+  return {
+    session: record(session, 'note', text.trim(), {
+      relatedEventId: eventId,
+      aircraftId: target.aircraftId,
+      severity,
+    }),
+  }
+}
+
+function routinePilotReport(s: Session, a: Aircraft, text: string): Session {
+  return a.pilotMode === 'operator'
+    ? record(s, 'system', `${a.id}: pilot report due — ${text}`, { aircraftId: a.id })
+    : record(s, 'pilot', text, { aircraftId: a.id, frequency: a.frequency })
+}
+
 function beginAutomaticGoAround(s: Session, a: Aircraft, reason: string): Session {
   a.phase = 'going-around'
   a.landingCleared = false
@@ -309,10 +494,7 @@ function beginAutomaticGoAround(s: Session, a: Aircraft, reason: string): Sessio
   a.pending = false
   a.clearance = 'Go around'
   setRoute(a, [{ x: RUNWAYS[a.runway].x, y: -110 }])
-  s = record(s, 'pilot', `${a.spoken}, going around, ${reason}.`, {
-    aircraftId: a.id,
-    frequency: a.frequency,
-  })
+  s = routinePilotReport(s, a, `${a.spoken}, going around, ${reason}.`)
   return record(
     s,
     'instructor',
@@ -336,6 +518,7 @@ function integrate(session: Session, dt: number): Session {
         { aircraftId: a.id, severity: 'attention' },
       )
     }
+    if (a.motionPaused) continue
     if (a.phase === 'final') {
       const runway = RUNWAYS[a.runway]
       a.speed = 130
@@ -352,11 +535,10 @@ function integrate(session: Session, dt: number): Session {
         a.pending = true
         a.requestAt = s.time
         a.overdueReported = false
-        s = record(
+        s = routinePilotReport(
           s,
-          'pilot',
+          a,
           `${a.spoken}, short final runway ${a.runway}, request landing clearance.`,
-          { aircraftId: a.id, frequency: a.frequency },
         )
       }
       if (
@@ -404,29 +586,22 @@ function integrate(session: Session, dt: number): Session {
         a.phase = 'ready'
         a.pending = true
         a.requestAt = s.time
-        s = record(s, 'pilot', `${a.spoken}, pushback complete, ready to taxi.`, {
-          aircraftId: a.id,
-          frequency: a.frequency,
-        })
+        s = routinePilotReport(s, a, `${a.spoken}, pushback complete, ready to taxi.`)
       } else if (a.phase === 'taxiing' && a.operation === 'departure') {
         a.phase = 'holding'
         a.pending = true
         a.requestAt = s.time
-        s = record(
+        s = routinePilotReport(
           s,
-          'pilot',
+          a,
           `${a.spoken}, holding short runway ${a.runway}, ready for departure.`,
-          { aircraftId: a.id, frequency: a.frequency },
         )
       } else if (a.phase === 'landing') {
         a.phase = 'vacated'
         a.runwayOccupied = false
         a.pending = true
         a.requestAt = s.time
-        s = record(s, 'pilot', `${a.spoken}, runway ${a.runway} vacated.`, {
-          aircraftId: a.id,
-          frequency: a.frequency,
-        })
+        s = routinePilotReport(s, a, `${a.spoken}, runway ${a.runway} vacated.`)
       } else {
         a.phase = 'complete'
         a.runwayOccupied = false
@@ -494,14 +669,14 @@ export function formatTime(seconds: number): string {
 
 export function sessionExport(s: Session) {
   return {
-    schema: 'vatsim-ai.session.v2',
+    schema: 'vatsim-ai.session.v3',
     engineVersion: ENGINE_VERSION,
     exportedAt: new Date().toISOString(),
     dataset: AIRPORT_DATA.id,
     limitations: [
       'Illustrative geometry',
       'Simplified kinematics',
-      'Scripted pilots; no speech recognition',
+      'Scripted or human-operated pilots; no speech recognition',
       'Not validated or approved for professional training',
     ],
     session: { ...s, running: false },

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { createSession, sessionExport, tick, transmit } from './engine'
+import {
+  addObservation,
+  createSession,
+  sessionExport,
+  setPilotMode,
+  tick,
+  transmit,
+} from './engine'
 import { decodeSession, forkSession, parseSessionFile } from './sessionCodec'
 
 function fixture() {
@@ -7,6 +14,56 @@ function fixture() {
 }
 
 describe('session interchange', () => {
+  it('migrates version 0.2 checkpoints and snapshots without losing their identity or history', () => {
+    const data = fixture()
+    data.schema = 'vatsim-ai.session.v2'
+    data.engineVersion = '0.2.0'
+    data.session.version = 2
+    const clean = (a: Record<string, unknown>) => {
+      delete a.pilotMode
+      delete a.motionPaused
+      delete a.queuedInstruction
+    }
+    data.session.aircraft.forEach(clean)
+    data.session.events.forEach((e: { source?: string; snapshot: Record<string, unknown>[] }) => {
+      delete e.source
+      e.snapshot.forEach(clean)
+    })
+    const decoded = decodeSession(data, 'checkpoint')
+    expect(decoded.migrated).toBe(true)
+    expect(decoded.session.id).toBe(data.session.id)
+    expect(decoded.session.events).toHaveLength(data.session.events.length)
+    expect(
+      decoded.session.aircraft.every((a) => a.pilotMode === 'scripted' && !a.motionPaused),
+    ).toBe(true)
+    expect(decoded.session.events[1].source).toBe('scripted')
+    expect(decoded.session.events[0].snapshot[0].pilotMode).toBe('scripted')
+  })
+  it.each([
+    'foreign-queue',
+    'missing-transmission',
+    'future-link',
+    'missing-source',
+    'invalid-mode',
+    'scripted-freeze',
+  ])('rejects invalid instructor state: %s', (corruption) => {
+    let s = setPilotMode(createSession(), 'MAS612', 'operator')
+    s = transmit(s, 'MAS612, pushback approved', '121.650').session
+    s = addObservation(s, 1, 'Review event', 'info').session
+    const data = JSON.parse(JSON.stringify(sessionExport(s)))
+    if (corruption === 'foreign-queue')
+      data.session.aircraft[0].queuedInstruction.text = 'MXD124, pushback approved'
+    if (corruption === 'missing-transmission')
+      data.session.aircraft[0].queuedInstruction.eventId = 9999
+    if (corruption === 'future-link') data.session.events.at(-1).relatedEventId = 9999
+    if (corruption === 'missing-source') delete data.session.events[1].source
+    if (corruption === 'invalid-mode') data.session.aircraft[0].pilotMode = 'external'
+    if (corruption === 'scripted-freeze') {
+      data.session.aircraft[1].pilotMode = 'scripted'
+      data.session.aircraft[1].motionPaused = true
+    }
+    expect(() => decodeSession(data)).toThrow(/Cannot open session/)
+  })
   it('recovers long local checkpoints while retaining the file-import history limit', () => {
     let s = createSession('departure')
     for (let i = 0; i < 1250; i++) s = transmit(s, 'MAS612, standby', '121.650').session
@@ -45,7 +102,7 @@ describe('session interchange', () => {
     delete a.landingCleared
     const restored = decodeSession(data)
     expect(restored.migrated).toBe(true)
-    expect(restored.session.version).toBe(2)
+    expect(restored.session.version).toBe(3)
     expect(restored.session.running).toBe(false)
     expect(restored.session.aircraft.find((a) => a.id === 'MAS1134')).toMatchObject({
       phase: 'final',

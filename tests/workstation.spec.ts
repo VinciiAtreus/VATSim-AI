@@ -32,6 +32,97 @@ test('controller selects an aircraft, transmits, and inspects a historical snaps
   expect(errors).toEqual([])
 })
 
+test('pseudo-pilot queue survives reload paused and executes once with operator attribution', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
+  await page.getByRole('button', { name: 'Instructor', exact: true }).click()
+  await page.getByRole('button', { name: 'Take over MAS612', exact: true }).click()
+  await page
+    .getByRole('textbox', { name: 'Controller transmission' })
+    .fill('MAS612, pushback approved')
+  await page.getByRole('button', { name: 'Transmit clearance' }).click()
+  await expect(page.getByLabel('Pending pilot instruction')).toContainText(
+    'MAS612, pushback approved',
+  )
+  await expect(page.getByRole('button', { name: 'Select MAS612' })).toContainText('AT STAND')
+  await expect(page.getByRole('log')).not.toContainText('Pushback approved, Malaysian six one two.')
+  await expect(page.getByRole('button', { name: 'Local save status' })).toContainText(
+    'SAVED LOCALLY',
+  )
+  await page.reload()
+  await page.getByRole('button', { name: 'Instructor', exact: true }).click()
+  await expect(page.getByLabel('Pending pilot instruction')).toContainText(
+    'MAS612, pushback approved',
+  )
+  await expect(page.getByRole('button', { name: 'Execute & read back' })).toBeDisabled()
+  await page.getByRole('button', { name: 'Resume exercise' }).click()
+  await page.getByRole('button', { name: 'Execute & read back' }).click()
+  await expect(page.getByRole('button', { name: 'Select MAS612' })).toContainText('PUSHBACK')
+  await expect(page.getByRole('log')).toContainText('OPERATOR')
+  await expect(page.getByRole('button', { name: 'Execute & read back' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Freeze aircraft motion' }).click()
+  await expect(page.getByRole('button', { name: 'Resume aircraft motion' })).toBeVisible()
+  await page.getByRole('button', { name: 'Session debrief', exact: true }).click()
+  await page.getByRole('button', { name: 'Interventions', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText('motion frozen by instructor')
+  await expect(page.getByRole('dialog')).not.toContainText('Exercise loaded.')
+})
+
+test('instructor declines an instruction and transmits a radio-only pilot call', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
+  await page.getByRole('button', { name: 'Instructor', exact: true }).click()
+  await page.getByRole('button', { name: 'Take over MAS612', exact: true }).click()
+  await page
+    .getByRole('textbox', { name: 'Controller transmission' })
+    .fill('MAS612, pushback approved')
+  await page.getByRole('button', { name: 'Transmit clearance' }).click()
+  await page.getByRole('button', { name: 'Unable / discard' }).click()
+  await expect(page.getByRole('log')).toContainText('Unable, Malaysian six one two.')
+  await page
+    .getByRole('textbox', { name: 'Pilot radio call', exact: true })
+    .fill('Malaysian six one two, request a delay for cabin checks.')
+  await page.getByRole('button', { name: 'Send pilot call on 121.650' }).click()
+  await expect(page.getByRole('log')).toContainText('request a delay for cabin checks')
+  await expect(page.getByRole('button', { name: 'Select MAS612' })).toContainText('AT STAND')
+  await page.getByRole('button', { name: 'Return to scripted pilot', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Take over MAS612', exact: true })).toBeVisible()
+})
+
+test('instructor notes link to inspected snapshots and persist in the debrief', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Session debrief', exact: true }).click()
+  await page.getByRole('button', { name: 'Review from beginning' }).click()
+  await page.getByRole('button', { name: 'Annotate event', exact: true }).click()
+  await page
+    .getByRole('textbox', { name: 'Observation note' })
+    .fill('Review the initial traffic picture.')
+  await page.getByLabel('Observation priority').selectOption('attention')
+  await page.getByRole('button', { name: 'Add linked observation' }).click()
+  await expect(
+    page.getByRole('status').filter({ hasText: 'Observation linked to event #1.' }),
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Local save status' })).toContainText(
+    'SAVED LOCALLY',
+  )
+  await page.reload()
+  await page.getByRole('button', { name: 'Session debrief', exact: true }).click()
+  await page.getByRole('button', { name: 'Observations', exact: true }).click()
+  const note = page
+    .getByRole('dialog')
+    .getByRole('button', { name: /Review the initial traffic picture/ })
+  await expect(note).toContainText('Linked to event #1')
+  await note.click()
+  await expect(page.getByRole('slider', { name: 'Replay event' })).toHaveValue('0')
+  await expect(page.getByRole('button', { name: 'Transmit clearance' })).toBeDisabled()
+})
+
 test('rejects a transmission on the wrong radio without moving the aircraft', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
@@ -116,7 +207,7 @@ test('imports an exported record into a separate paused copy and preserves check
   const chunks = []
   for await (const chunk of stream!) chunks.push(Buffer.from(chunk))
   const buffer = Buffer.concat(chunks)
-  expect(JSON.parse(buffer.toString()).schema).toBe('vatsim-ai.session.v2')
+  expect(JSON.parse(buffer.toString()).schema).toBe('vatsim-ai.session.v3')
   await page.getByRole('button', { name: 'Saved sessions', exact: true }).click()
   await page
     .getByLabel('Import session JSON', { exact: true })
@@ -157,7 +248,7 @@ test('offers an explicit model migration for version 0.1 exports', async ({ page
     buffer: Buffer.from(JSON.stringify(legacy)),
   })
   await expect(page.getByRole('dialog', { name: 'Restore this exercise?' })).toContainText(
-    'version 0.2 moving-arrival model',
+    'current model with scripted pilots',
   )
   await page.getByRole('button', { name: 'Restore paused', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Start exercise', exact: true })).toBeEnabled()
@@ -192,7 +283,11 @@ test('arrival progresses to a recorded automatic go-around when uncleared', asyn
   await page.clock.runFor(19_000)
   await expect(page.getByRole('button', { name: 'Select MAS1134' })).toContainText('GOING AROUND')
   await page.getByRole('button', { name: /^Instructor/ }).click()
-  await expect(page.getByText(/automatic go-around — landing clearance not received/)).toBeVisible()
+  await expect(
+    page
+      .locator('.observation')
+      .filter({ hasText: 'automatic go-around — landing clearance not received' }),
+  ).toBeVisible()
 })
 
 test('compact desktop keeps the transmission box above the status bar after recovery', async ({
@@ -275,5 +370,60 @@ test('browser history beyond the file-import limit can recover and restore indep
   await expect(page.getByRole('dialog')).toContainText(`${long.events.length + 1} events`)
   await page.getByRole('button', { name: 'Restore Departure fundamentals', exact: true }).click()
   await page.getByRole('button', { name: 'Restore paused', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Start exercise', exact: true })).toBeEnabled()
+})
+
+test('recovers a version 0.2 checkpoint with a migration notice and scripted defaults', async ({
+  page,
+}) => {
+  const legacy = JSON.parse(JSON.stringify(sessionExport(createSession('departure'))))
+  legacy.schema = 'vatsim-ai.session.v2'
+  legacy.engineVersion = '0.2.0'
+  legacy.session.version = 2
+  const clean = (a: Record<string, unknown>) => {
+    delete a.pilotMode
+    delete a.motionPaused
+  }
+  legacy.session.aircraft.forEach(clean)
+  legacy.session.events.forEach((e: { source?: string; snapshot: Record<string, unknown>[] }) => {
+    delete e.source
+    e.snapshot.forEach(clean)
+  })
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: 'Local save status' })).toContainText(
+    'SAVED LOCALLY',
+  )
+  await page.evaluate(async (envelope) => {
+    const db = await new Promise<IDBDatabase>((resolve) => {
+      const request = indexedDB.open('vatsim-ai-workstation', 1)
+      request.onsuccess = () => resolve(request.result)
+    })
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('sessions', 'readwrite')
+      tx.objectStore('sessions').put({
+        id: envelope.session.id,
+        savedAt: new Date(Date.now() + 1000).toISOString(),
+        scenarioId: envelope.session.scenarioId,
+        elapsed: 0,
+        eventCount: envelope.session.events.length,
+        envelope,
+      })
+      tx.oncomplete = () => {
+        db.close()
+        resolve()
+      }
+      tx.onabort = () => {
+        db.close()
+        reject(tx.error)
+      }
+    })
+  }, legacy)
+  await page.reload()
+  await expect(
+    page.getByText(/Legacy checkpoint migrated to the current model with scripted pilots/),
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: /WMKK–02 Departure fundamentals/ })).toBeVisible()
+  await page.getByRole('button', { name: 'Instructor', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Take over MAS612', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Start exercise', exact: true })).toBeEnabled()
 })

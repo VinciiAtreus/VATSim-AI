@@ -1,6 +1,7 @@
 import { AIRPORT_DATA, initialAircraft, RADIOS, RUNWAYS, SCENARIOS } from './airport'
 import { copyAircraft } from './engine'
 import { ENGINE_VERSION } from './version'
+import { parseTransmission } from './parser'
 import type { Aircraft, Session, SimEvent } from './types'
 
 export const MAX_SESSION_BYTES = 10 * 1024 * 1024
@@ -48,7 +49,7 @@ function fail(reason: string): never {
   throw new Error(`Cannot open session: ${reason}`)
 }
 
-function aircraft(value: unknown, expectedIds: string[]): Aircraft {
+function aircraft(value: unknown, expectedIds: string[], legacy: boolean): Aircraft {
   if (!object(value) || typeof value.id !== 'string' || !expectedIds.includes(value.id))
     fail('unknown aircraft identity.')
   const a = value
@@ -93,6 +94,24 @@ function aircraft(value: unknown, expectedIds: string[]): Aircraft {
       a.discrepancy.issued !== a.runway)
   )
     fail('invalid readback discrepancy.')
+  if (
+    !legacy &&
+    (!['scripted', 'operator'].includes(a.pilotMode as string) ||
+      !bool(a.motionPaused) ||
+      (a.pilotMode === 'scripted' && (a.motionPaused || a.queuedInstruction !== undefined)))
+  )
+    fail('invalid pseudo-pilot state.')
+  const q = !legacy ? a.queuedInstruction : undefined
+  if (
+    q !== undefined &&
+    (!object(q) ||
+      !integer(q.eventId) ||
+      q.eventId < 1 ||
+      !text(q.text, 1000) ||
+      !q.text.trim() ||
+      !frequencies.has(q.frequency as string))
+  )
+    fail('invalid queued instruction.')
   // Copy known fields only. Never spread arbitrary imported properties into application state.
   return {
     id: a.id as string,
@@ -124,13 +143,22 @@ function aircraft(value: unknown, expectedIds: string[]): Aircraft {
       : undefined,
     landingCleared: (a.landingCleared as boolean | undefined) ?? a.phase === 'landing',
     approachCallMade: (a.approachCallMade as boolean | undefined) ?? false,
+    pilotMode: legacy ? 'scripted' : (a.pilotMode as Aircraft['pilotMode']),
+    motionPaused: legacy ? false : (a.motionPaused as boolean),
+    queuedInstruction: q
+      ? {
+          eventId: (q as Obj).eventId as number,
+          text: (q as Obj).text as string,
+          frequency: (q as Obj).frequency as Aircraft['frequency'],
+        }
+      : undefined,
   }
 }
 
-function fleet(value: unknown, expected: string[]): Aircraft[] {
+function fleet(value: unknown, expected: string[], legacy: boolean): Aircraft[] {
   if (!Array.isArray(value) || value.length !== expected.length)
     fail('aircraft count does not match the exercise.')
-  const list = value.map((item) => aircraft(item, expected))
+  const list = value.map((item) => aircraft(item, expected, legacy))
   if (new Set(list.map((a) => a.id)).size !== list.length) fail('duplicate aircraft identity.')
   return list
 }
@@ -141,23 +169,29 @@ export function decodeSession(
 ): DecodedSession {
   if (
     !object(value) ||
-    !['vatsim-ai.session.v1', 'vatsim-ai.session.v2'].includes(value.schema as string)
+    !['vatsim-ai.session.v1', 'vatsim-ai.session.v2', 'vatsim-ai.session.v3'].includes(
+      value.schema as string,
+    )
   )
     fail('unsupported file format. Choose an exported VATSIM AI session.')
   if (value.dataset !== AIRPORT_DATA.id)
     fail('this airport dataset is not supported by the current build.')
-  const migrated = value.schema === 'vatsim-ai.session.v1'
-  if (!migrated && value.engineVersion !== ENGINE_VERSION)
+  const legacyV1 = value.schema === 'vatsim-ai.session.v1'
+  const migrated = value.schema !== 'vatsim-ai.session.v3'
+  if (
+    (!migrated && value.engineVersion !== ENGINE_VERSION) ||
+    (value.schema === 'vatsim-ai.session.v2' && value.engineVersion !== '0.2.0')
+  )
     fail('this engine version is not supported. Keep the original file.')
   const raw = value.session
   if (
     !object(raw) ||
-    raw.version !== (migrated ? 1 : 2) ||
+    raw.version !== (legacyV1 ? 1 : migrated ? 2 : 3) ||
     !SCENARIOS.some((s) => s.id === raw.scenarioId)
   )
     fail('invalid session version or exercise.')
   if (
-    !migrated &&
+    !legacyV1 &&
     (typeof raw.id !== 'string' || !/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(raw.id))
   )
     fail('invalid session identifier.')
@@ -188,16 +222,21 @@ export function decodeSession(
         : 'invalid checkpoint counters or event history.',
     )
   const ids = initialAircraft(raw.scenarioId as string).map((a) => a.id)
-  const current = fleet(raw.aircraft, ids)
+  const current = fleet(raw.aircraft, ids, migrated)
   let lastId = 0
   let lastTime = 0
+  const priorEvents = new Map<number, string>()
   const events: SimEvent[] = raw.events.map((item) => {
     if (
       !object(item) ||
       !integer(item.id) ||
       item.id <= lastId ||
       !finite(item.time, lastTime, raw.time as number) ||
-      !['system', 'controller', 'pilot', 'instructor'].includes(item.kind as string) ||
+      !(
+        migrated
+          ? ['system', 'controller', 'pilot', 'instructor']
+          : ['system', 'controller', 'pilot', 'instructor', 'operator', 'note']
+      ).includes(item.kind as string) ||
       !['info', 'attention', 'critical'].includes(item.severity as string) ||
       !text(item.text, 4000) ||
       (item.aircraftId !== undefined && !ids.includes(item.aircraftId as string)) ||
@@ -205,6 +244,23 @@ export function decodeSession(
       (item.blockedRunway !== null && !runway(item.blockedRunway))
     )
       fail('invalid event order, timestamp, or contents.')
+    if (
+      !migrated &&
+      ((item.kind === 'pilot'
+        ? !['scripted', 'operator'].includes(item.source as string)
+        : item.source !== undefined) ||
+        (item.kind === 'note' && item.relatedEventId === undefined) ||
+        (item.relatedEventId !== undefined &&
+          (!['note', 'operator'].includes(item.kind as string) ||
+            !integer(item.relatedEventId) ||
+            item.relatedEventId >= item.id ||
+            !priorEvents.has(item.relatedEventId) ||
+            (item.kind === 'note'
+              ? priorEvents.get(item.relatedEventId) === 'note'
+              : priorEvents.get(item.relatedEventId) !== 'controller'))))
+    )
+      fail('invalid event attribution or observation link.')
+    priorEvents.set(item.id, item.kind as string)
     lastId = item.id
     lastTime = item.time
     return {
@@ -216,16 +272,46 @@ export function decodeSession(
       aircraftId: item.aircraftId as string | undefined,
       frequency: item.frequency as SimEvent['frequency'],
       blockedRunway: item.blockedRunway as SimEvent['blockedRunway'],
-      snapshot: fleet(item.snapshot, ids),
+      snapshot: fleet(item.snapshot, ids, migrated),
+      source:
+        item.kind === 'pilot'
+          ? migrated
+            ? 'scripted'
+            : (item.source as SimEvent['source'])
+          : undefined,
+      relatedEventId: migrated ? undefined : (item.relatedEventId as number | undefined),
     }
   })
+  const byId = new Map(events.map((e) => [e.id, e]))
+  for (const { list, maxId } of [
+    { list: current, maxId: lastId },
+    ...events.map((e) => ({ list: e.snapshot, maxId: e.id })),
+  ]) {
+    for (const a of list) {
+      const q = a.queuedInstruction
+      if (!q) continue
+      const issued = byId.get(q.eventId)
+      if (
+        !issued ||
+        issued.kind !== 'controller' ||
+        issued.aircraftId !== a.id ||
+        issued.text !== q.text ||
+        issued.frequency !== q.frequency ||
+        q.eventId > maxId
+      )
+        fail('queued instruction does not match its recorded transmission.')
+      const parsed = parseTransmission(q.text, list)
+      if (!parsed.ok || parsed.command.aircraftId !== a.id)
+        fail('queued instruction targets a different aircraft or unsupported command.')
+    }
+  }
   if (
     raw.nextEventId <= lastId ||
     raw.completed !== current.filter((a) => a.phase === 'complete').length ||
     raw.attempted !== events.filter((e) => e.kind === 'controller').length
   )
     fail('session counters do not match its history.')
-  if (migrated) {
+  if (legacyV1) {
     for (const a of current) {
       const r = RUNWAYS[a.runway]
       if (a.operation === 'arrival' && a.phase === 'landing' && a.position.y > r.bottom) {
@@ -239,8 +325,8 @@ export function decodeSession(
   return {
     migrated,
     session: {
-      version: 2,
-      id: migrated ? crypto.randomUUID() : (raw.id as string),
+      version: 3,
+      id: legacyV1 ? crypto.randomUUID() : (raw.id as string),
       scenarioId: raw.scenarioId as string,
       time: raw.time,
       running: false,
