@@ -111,7 +111,11 @@ export default function SessionLibrary({
                     {exercise?.code ?? 'EXERCISE'}
                     {saved.id === currentId && <span className="current-checkpoint">CURRENT</span>}
                   </span>
-                  <h3>{exercise?.title ?? 'Saved exercise'}</h3>
+                  <h3>
+                    {saved.envelope?.session?.exercise?.title ??
+                      exercise?.title ??
+                      'Saved exercise'}
+                  </h3>
                   <p>
                     <Clock3 size={11} />
                     {formatTime(saved.elapsed)}

@@ -2,7 +2,11 @@
 
 A WMKK controller-workstation development prototype for desktop browsers. Built with React, TypeScript, and Vite; configured for Vercel.
 
-**Development status:** schematic airport geometry, simplified movement, scripted pilots. Not validated or approved for professional ATC training. No speech recognition, external AI, live VATSIM integration, or operational separation model is implemented.
+**Development status:** schematic airport geometry, simplified movement, scripted pilots. Not validated or approved for professional ATC training. Optional browser speech recognition prepares drafts for review. No generative pilot AI, live VATSIM integration, or validated operational separation model is implemented.
+
+## Consolidated browser workflows
+
+Create versioned lessons with traffic release times, exercise weather, timed events and draft criteria. Practise adjacent-station coordination, dictate reviewable voice drafts where the browser supports recognition, record manual assessments, play historical snapshots, and export printable reports or radio CSV. See the [version 0.4 walkthrough](docs/RELEASE_0_4.md). The release stays browser-only and needs no API keys or backend.
 
 ## Instructor workflow
 
@@ -35,7 +39,7 @@ The **Departure fundamentals** exercise is the easiest complete workflow. See [i
 
 Exercises are automatically checkpointed in IndexedDB after recorded events and approximately every three seconds during movement. Refreshing restores the latest readable checkpoint **paused**. Open **Saved exercises** from the folder icon to save, export, import, or restore a separate paused copy. Browser storage is scoped to the current browser and site address; it is not server-backed or guaranteed archival storage. Clearing site data removes checkpoints. Export JSON for an independent copy.
 
-Import supports version 0.3 records and migrates version 0.1/0.2 exports, with an explicit model-change notice. Files are limited to 10 MB and 2,500 events; incompatible or malformed records are rejected before changing the exercise. Records are not authenticated assessment evidence. Continuous replay playback and audio recording are not implemented.
+Import supports version 0.4 records and migrates version 0.1/0.2/0.3 exports, with an explicit model-change notice. Files are limited to 10 MB and 2,500 events; incompatible or malformed records are rejected before changing the exercise. Records are not authenticated assessment evidence. Replay plays captured snapshots at 1/2/4 events per second. Audio recording is not implemented.
 
 ## Verify
 
@@ -62,6 +66,7 @@ Review a branch preview before merging to the production branch. An actual Verce
 
 ## Project documents
 
+- [Version 0.4 consolidated browser workflows](docs/RELEASE_0_4.md)
 - [Version 0.3 instructor workflow and review walkthrough](docs/RELEASE_0_3.md)
 - [Version 0.2 changes and review walkthrough](docs/RELEASE_0_2.md)
 - [Product requirements and milestone gates](docs/PRODUCT_REQUIREMENTS.md)

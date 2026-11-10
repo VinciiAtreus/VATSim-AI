@@ -158,6 +158,7 @@ const base = {
   approachCallMade: false,
   pilotMode: 'scripted' as const,
   motionPaused: false,
+  activationTime: 0,
 }
 export function initialAircraft(scenarioId: string): Aircraft[] {
   const aircraft: Aircraft[] = [
@@ -227,6 +228,7 @@ export function initialAircraft(scenarioId: string): Aircraft[] {
 }
 
 export const PHASE_LABELS: Record<Aircraft['phase'], string> = {
+  scheduled: 'SCHEDULED',
   parked: 'AT STAND',
   pushback: 'PUSHBACK',
   ready: 'READY TO TAXI',
@@ -243,9 +245,38 @@ export const PHASE_LABELS: Record<Aircraft['phase'], string> = {
   complete: 'COMPLETE',
 }
 
-export function pilotRequest(a: Aircraft): string {
+export function pilotRequest(a: Aircraft, information = 'A'): string {
+  const words = [
+    'Alpha',
+    'Bravo',
+    'Charlie',
+    'Delta',
+    'Echo',
+    'Foxtrot',
+    'Golf',
+    'Hotel',
+    'India',
+    'Juliett',
+    'Kilo',
+    'Lima',
+    'Mike',
+    'November',
+    'Oscar',
+    'Papa',
+    'Quebec',
+    'Romeo',
+    'Sierra',
+    'Tango',
+    'Uniform',
+    'Victor',
+    'Whiskey',
+    'X-ray',
+    'Yankee',
+    'Zulu',
+  ]
+  const info = words[information.charCodeAt(0) - 65] ?? 'Alpha'
   if (a.phase === 'final')
-    return `${a.spoken}, established final runway ${a.runway}, information Alpha.`
-  if (a.phase === 'ready') return `Lumpur Ground, ${a.spoken}, ready to taxi, information Alpha.`
-  return `Lumpur Ground, ${a.spoken}, stand ${a.stand}, request pushback, information Alpha.`
+    return `${a.spoken}, established final runway ${a.runway}, information ${info}.`
+  if (a.phase === 'ready') return `Lumpur Ground, ${a.spoken}, ready to taxi, information ${info}.`
+  return `Lumpur Ground, ${a.spoken}, stand ${a.stand}, request pushback, information ${info}.`
 }

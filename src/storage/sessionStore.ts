@@ -102,7 +102,7 @@ export async function recoverSession(): Promise<{ session: Session | null; warni
               : []),
             ...(decoded.migrated
               ? [
-                  'Legacy checkpoint migrated to the current model with scripted pilots; restored paused. Review the model-change notes before resuming.',
+                  'Legacy checkpoint migrated to the current model; restored paused. Existing pilot controls are retained where supported. Review the model-change notes before resuming.',
                 ]
               : []),
           ].join(' ') || undefined,

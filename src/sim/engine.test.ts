@@ -234,7 +234,7 @@ describe('instructor scenarios and evidence', () => {
   })
   it('exports the full session, data version, and limitations without a running clock', () => {
     const exported = sessionExport({ ...createSession(), running: true })
-    expect(exported.schema).toBe('vatsim-ai.session.v3')
+    expect(exported.schema).toBe('vatsim-ai.session.v4')
     expect(exported.session.running).toBe(false)
     expect(exported.limitations).toContain('Illustrative geometry')
   })

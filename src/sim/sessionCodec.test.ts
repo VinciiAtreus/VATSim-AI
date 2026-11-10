@@ -102,7 +102,7 @@ describe('session interchange', () => {
     delete a.landingCleared
     const restored = decodeSession(data)
     expect(restored.migrated).toBe(true)
-    expect(restored.session.version).toBe(3)
+    expect(restored.session.version).toBe(4)
     expect(restored.session.running).toBe(false)
     expect(restored.session.aircraft.find((a) => a.id === 'MAS1134')).toMatchObject({
       phase: 'final',

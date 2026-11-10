@@ -207,7 +207,7 @@ test('imports an exported record into a separate paused copy and preserves check
   const chunks = []
   for await (const chunk of stream!) chunks.push(Buffer.from(chunk))
   const buffer = Buffer.concat(chunks)
-  expect(JSON.parse(buffer.toString()).schema).toBe('vatsim-ai.session.v3')
+  expect(JSON.parse(buffer.toString()).schema).toBe('vatsim-ai.session.v4')
   await page.getByRole('button', { name: 'Saved sessions', exact: true }).click()
   await page
     .getByLabel('Import session JSON', { exact: true })
@@ -248,7 +248,7 @@ test('offers an explicit model migration for version 0.1 exports', async ({ page
     buffer: Buffer.from(JSON.stringify(legacy)),
   })
   await expect(page.getByRole('dialog', { name: 'Restore this exercise?' })).toContainText(
-    'current model with scripted pilots',
+    'current model. Existing pilot controls are retained',
   )
   await page.getByRole('button', { name: 'Restore paused', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Start exercise', exact: true })).toBeEnabled()
@@ -420,7 +420,7 @@ test('recovers a version 0.2 checkpoint with a migration notice and scripted def
   }, legacy)
   await page.reload()
   await expect(
-    page.getByText(/Legacy checkpoint migrated to the current model with scripted pilots/),
+    page.getByText(/Legacy checkpoint migrated to the current model; restored paused/),
   ).toBeVisible()
   await expect(page.getByRole('button', { name: /WMKK–02 Departure fundamentals/ })).toBeVisible()
   await page.getByRole('button', { name: 'Instructor', exact: true }).click()

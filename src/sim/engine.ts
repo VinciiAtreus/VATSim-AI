@@ -2,14 +2,24 @@ import {
   AIRPORT_DATA,
   ARRIVAL_MODEL,
   arrivalDecisionSeconds,
-  initialAircraft,
   pilotRequest,
   RUNWAYS,
-  SCENARIOS,
 } from './airport'
+import { builtinExercise, decodeExercise, decodeWeather, exerciseAircraft } from './exercises'
 import { parseTransmission } from './parser'
-import { ENGINE_VERSION } from './version'
-import type { Aircraft, Command, Frequency, Point, RunwayId, Session, SimEvent } from './types'
+import { BUILD_COMMIT, ENGINE_VERSION } from './version'
+import type {
+  Aircraft,
+  Assessment,
+  Command,
+  ExerciseDefinition,
+  Frequency,
+  Point,
+  RunwayId,
+  Session,
+  SimEvent,
+  Weather,
+} from './types'
 
 export function copyAircraft(aircraft: Aircraft[]): Aircraft[] {
   return aircraft.map((a) => ({
@@ -38,35 +48,46 @@ export function record(
     ...options,
     snapshot: copyAircraft(session.aircraft),
     blockedRunway: session.blockedRunway,
+    weather: { ...session.weather },
+    coordination: session.coordination.map((c) => ({ ...c })),
   }
   return { ...session, nextEventId: session.nextEventId + 1, events: [...session.events, event] }
 }
-export function createSession(scenarioId = 'morning'): Session {
-  const validId = SCENARIOS.some((s) => s.id === scenarioId) ? scenarioId : 'morning'
+export function createSession(scenarioId = 'morning', definition?: ExerciseDefinition): Session {
+  const exercise = decodeExercise(definition ?? builtinExercise(scenarioId))
+  const validId = exercise.id
   let s: Session = {
-    version: 3,
+    version: 4,
     id: crypto.randomUUID(),
     scenarioId: validId,
     time: 0,
     running: false,
     speed: 1,
-    aircraft: initialAircraft(validId),
+    aircraft: exerciseAircraft(exercise),
     events: [],
     nextEventId: 1,
     guidance: true,
-    injectReadback: validId === 'readback',
+    injectReadback: exercise.baseScenario === 'readback',
     blockedRunway: null,
     completed: 0,
     attempted: 0,
     accepted: 0,
+    exercise,
+    weather: { ...exercise.weather },
+    firedTriggers: [],
+    coordination: [],
+    assessments: [],
   }
   s = record(
     s,
     'system',
     'Exercise loaded. Illustrative WMKK dataset; procedural validation pending.',
   )
-  for (const a of s.aircraft)
-    s = record(s, 'pilot', pilotRequest(a), { aircraftId: a.id, frequency: a.frequency })
+  for (const a of s.aircraft.filter((a) => a.phase !== 'scheduled'))
+    s = record(s, 'pilot', pilotRequest(a, s.weather.information), {
+      aircraftId: a.id,
+      frequency: a.frequency,
+    })
   return s
 }
 
@@ -83,6 +104,7 @@ function occupied(s: Session, runway: RunwayId, ownId: string) {
 }
 
 function validate(s: Session, a: Aircraft, c: Command, frequency: Frequency): string | null {
+  if (a.phase === 'scheduled') return 'This aircraft has not entered the exercise yet.'
   if (a.phase === 'complete') return 'This aircraft has completed its exercise.'
   if (frequency !== a.frequency)
     return `No response: ${a.id} is on ${a.frequency}. Select the correct transmit frequency.`
@@ -115,6 +137,17 @@ function validate(s: Session, a: Aircraft, c: Command, frequency: Frequency): st
       if (a.operation === 'arrival' && a.phase !== 'vacated')
         return 'Transfer this arrival to ground after it has vacated the runway.'
       if (a.frequency === c.frequency) return 'The aircraft is already on that frequency.'
+      if (
+        s.exercise.requireCoordination &&
+        !s.coordination.some(
+          (item) =>
+            item.aircraftId === a.id &&
+            item.from === a.frequency &&
+            item.to === c.frequency &&
+            item.status === 'approved',
+        )
+      )
+        return 'Exercise coordination required: obtain adjacent-station acceptance before issuing the transfer.'
       return null
     }
     case 'lineup':
@@ -339,7 +372,7 @@ export function setPilotMode(
   if (
     !original ||
     original.pilotMode === mode ||
-    (mode === 'operator' && original.phase === 'complete')
+    (mode === 'operator' && ['complete', 'scheduled'].includes(original.phase))
   )
     return session
   const s = { ...session, aircraft: copyAircraft(session.aircraft) }
@@ -445,7 +478,7 @@ export function sendPilotCall(
   text: string,
 ): { session: Session; error?: string } {
   const a = session.aircraft.find((item) => item.id === aircraftId)
-  if (!a || a.pilotMode !== 'operator' || a.phase === 'complete')
+  if (!a || a.pilotMode !== 'operator' || ['complete', 'scheduled'].includes(a.phase))
     return { session, error: 'Take over an active aircraft before sending a pilot call.' }
   if (!session.running)
     return { session, error: 'Resume the exercise before sending a pilot call.' }
@@ -468,7 +501,7 @@ export function addObservation(
   severity: SimEvent['severity'],
 ): { session: Session; error?: string } {
   const target = session.events.find((e) => e.id === eventId)
-  if (!target || target.kind === 'note')
+  if (!target || ['note', 'assessment'].includes(target.kind))
     return { session, error: 'Select a recorded exercise event to annotate.' }
   if (!text.trim() || text.length > 1000)
     return { session, error: 'Observations must contain 1–1,000 characters.' }
@@ -508,7 +541,40 @@ function integrate(session: Session, dt: number): Session {
     ...session,
     time: session.time + dt,
   }
+  for (const trigger of s.exercise.triggers) {
+    if (trigger.at > s.time || s.firedTriggers.includes(trigger.id)) continue
+    s = { ...s, firedTriggers: [...s.firedTriggers, trigger.id] }
+    if (trigger.action === 'readback') s = { ...s, injectReadback: true }
+    else if (trigger.action === 'block') s = { ...s, blockedRunway: trigger.runway }
+    else if (s.blockedRunway === trigger.runway) s = { ...s, blockedRunway: null }
+    s = record(
+      s,
+      'instructor',
+      `Timed event ${trigger.id}: ${trigger.action === 'readback' ? 'scripted readback error armed' : `runway ${trigger.runway} ${trigger.action === 'block' ? 'obstruction placed' : 'obstruction cleared if present'}`}.`,
+      { severity: trigger.action === 'block' ? 'attention' : 'info' },
+    )
+  }
+  if (s.exercise.automaticCoordination)
+    for (const item of s.coordination) {
+      if (item.status === 'pending' && s.time - item.requestedAt >= 8)
+        s = decideCoordination(s, item.id, true, 'scripted').session
+    }
   for (const a of s.aircraft) {
+    if (a.phase === 'scheduled') {
+      if (s.time < a.activationTime) continue
+      const traffic = s.exercise.traffic.find((t) => t.callsign === a.id)!
+      a.phase = exerciseAircraft({
+        ...s.exercise,
+        traffic: [{ ...traffic, releaseAt: 0 }],
+      })[0].phase
+      a.pending = true
+      a.requestAt = s.time
+      s = record(s, 'system', `${a.id} entered the exercise.`, { aircraftId: a.id })
+      s = record(s, 'pilot', pilotRequest(a, s.weather.information), {
+        aircraftId: a.id,
+        frequency: a.frequency,
+      })
+    }
     if (a.pending && s.time - a.requestAt >= 90 && !a.overdueReported) {
       a.overdueReported = true
       s = record(
@@ -669,16 +735,141 @@ export function formatTime(seconds: number): string {
 
 export function sessionExport(s: Session) {
   return {
-    schema: 'vatsim-ai.session.v3',
+    schema: 'vatsim-ai.session.v4',
     engineVersion: ENGINE_VERSION,
+    buildCommit: BUILD_COMMIT,
     exportedAt: new Date().toISOString(),
     dataset: AIRPORT_DATA.id,
     limitations: [
       'Illustrative geometry',
       'Simplified kinematics',
-      'Scripted or human-operated pilots; no speech recognition',
+      'Scripted or human-operated pilots; optional browser speech drafts',
       'Not validated or approved for professional training',
     ],
     session: { ...s, running: false },
+  }
+}
+
+export function updateWeather(
+  session: Session,
+  value: Weather,
+): { session: Session; error?: string } {
+  try {
+    const weather = decodeWeather(value)
+    return {
+      session: record(
+        { ...session, weather },
+        'instructor',
+        `Exercise weather: wind ${weather.windDirection} degrees ${weather.windSpeed} knots, QNH ${weather.qnh}, information ${weather.information}. Display and briefing only; no aerodynamic model or runway reassignment.`,
+      ),
+    }
+  } catch (e) {
+    return { session, error: e instanceof Error ? e.message : 'Invalid weather.' }
+  }
+}
+export function requestCoordination(
+  session: Session,
+  aircraftId: string,
+): { session: Session; error?: string } {
+  const a = session.aircraft.find((item) => item.id === aircraftId)
+  if (!session.running) return { session, error: 'Resume the exercise before coordinating.' }
+  if (!a || !(a.operation === 'departure' ? a.phase === 'holding' : a.phase === 'vacated'))
+    return {
+      session,
+      error: 'Coordinate a departure holding short or an arrival that has vacated.',
+    }
+  const to = a.operation === 'departure' ? RUNWAYS[a.runway].frequency : RUNWAYS[a.runway].ground
+  if (to === a.frequency)
+    return { session, error: 'This aircraft is already with the next station.' }
+  if (
+    session.coordination.some(
+      (c) =>
+        c.aircraftId === aircraftId &&
+        c.from === a.frequency &&
+        c.to === to &&
+        c.status !== 'declined',
+    )
+  )
+    return { session, error: 'Coordination is already pending or accepted for this transfer.' }
+  const item = {
+    id: session.nextEventId,
+    aircraftId,
+    from: a.frequency,
+    to,
+    requestedAt: session.time,
+    status: 'pending' as const,
+  }
+  return {
+    session: record(
+      { ...session, coordination: [...session.coordination, item] },
+      'coordination',
+      `${aircraftId}: transfer acceptance requested from ${to}, current station ${a.frequency}.`,
+      { aircraftId },
+    ),
+  }
+}
+export function decideCoordination(
+  session: Session,
+  id: number,
+  approved: boolean,
+  source: 'scripted' | 'manual' = 'manual',
+): { session: Session; error?: string } {
+  const item = session.coordination.find((c) => c.id === id)
+  if (!item || item.status !== 'pending')
+    return { session, error: 'This coordination request is no longer pending.' }
+  const coordination = session.coordination.map((c) =>
+    c.id === id
+      ? {
+          ...c,
+          status: approved ? ('approved' as const) : ('declined' as const),
+          decidedAt: session.time,
+        }
+      : { ...c },
+  )
+  return {
+    session: record(
+      { ...session, coordination },
+      'coordination',
+      `${item.aircraftId}: ${item.to} ${approved ? 'accepted' : 'declined'} transfer (${source === 'scripted' ? 'scripted adjacent station' : 'instructor decision'}). Radio ownership changes only when the controller transfer is applied.`,
+      { aircraftId: item.aircraftId },
+    ),
+  }
+}
+export function assessCriterion(
+  session: Session,
+  assessment: Omit<Assessment, 'time'>,
+): { session: Session; error?: string } {
+  const target = session.events.find((e) => e.id === assessment.eventId)
+  if (
+    !session.exercise.criteria.some((c) => c.id === assessment.criterionId) ||
+    !['not-observed', 'needs-review', 'demonstrated'].includes(assessment.rating) ||
+    !assessment.reviewer.trim() ||
+    assessment.reviewer.length > 80 ||
+    assessment.note.length > 1000 ||
+    !target ||
+    ['note', 'assessment'].includes(target.kind)
+  )
+    return {
+      session,
+      error:
+        'Choose a criterion, recorded evidence, rating, and reviewer name (maximum 80 characters); notes are limited to 1,000 characters.',
+    }
+  const item = {
+    ...assessment,
+    reviewer: assessment.reviewer.trim(),
+    note: assessment.note.trim(),
+    time: session.time,
+  }
+  const assessments = [
+    ...session.assessments.filter((a) => a.criterionId !== item.criterionId),
+    item,
+  ]
+  return {
+    session: record(
+      { ...session, assessments },
+      'assessment',
+      `${item.reviewer}: ${session.exercise.criteria.find((c) => c.id === item.criterionId)!.title} — ${item.rating}. ${item.note}`,
+      { relatedEventId: item.eventId, aircraftId: target.aircraftId },
+    ),
   }
 }

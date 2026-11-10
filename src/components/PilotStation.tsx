@@ -42,7 +42,7 @@ export default function PilotStation({
       </p>
       <button
         className="secondary-button"
-        disabled={disabled || (!operator && a.phase === 'complete')}
+        disabled={disabled || (!operator && ['complete', 'scheduled'].includes(a.phase))}
         onClick={() =>
           perform((s) => ({ session: setPilotMode(s, a.id, operator ? 'scripted' : 'operator') }))
         }
@@ -62,7 +62,7 @@ export default function PilotStation({
           </p>
           <button
             className={`secondary-button ${a.motionPaused ? 'motion-frozen' : ''}`}
-            disabled={disabled || a.phase === 'complete'}
+            disabled={disabled || ['complete', 'scheduled'].includes(a.phase)}
             onClick={() =>
               perform((s) => ({ session: setAircraftMotionPaused(s, a.id, !a.motionPaused) }))
             }
@@ -114,14 +114,19 @@ export default function PilotStation({
               maxLength={1000}
               rows={3}
               value={message}
-              disabled={disabled || a.phase === 'complete'}
+              disabled={disabled || ['complete', 'scheduled'].includes(a.phase)}
               onChange={(e) => setMessage(e.target.value)}
               placeholder={`${a.spoken}, …`}
             />
             <small>Radio only; does not execute an instruction or change the route.</small>
             <button
               className="secondary-button"
-              disabled={disabled || !running || !message.trim() || a.phase === 'complete'}
+              disabled={
+                disabled ||
+                !running ||
+                !message.trim() ||
+                ['complete', 'scheduled'].includes(a.phase)
+              }
             >
               <Send size={13} />
               Send pilot call on {a.frequency}

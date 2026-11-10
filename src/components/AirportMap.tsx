@@ -1,16 +1,24 @@
 import { useState } from 'react'
 import { Crosshair, Layers3, Minus, Plus, Route, Wind } from 'lucide-react'
 import { PHASE_LABELS, RUNWAYS } from '../sim/airport'
-import type { Aircraft, RunwayId } from '../sim/types'
+import type { Aircraft, RunwayId, Weather } from '../sim/types'
 
 type Props = {
+  weather: Weather
   aircraft: Aircraft[]
   selected: string
   onSelect: (id: string) => void
   blockedRunway: RunwayId | null
   replay: boolean
 }
-export default function AirportMap({ aircraft, selected, onSelect, blockedRunway, replay }: Props) {
+export default function AirportMap({
+  aircraft,
+  selected,
+  onSelect,
+  blockedRunway,
+  replay,
+  weather,
+}: Props) {
   const [zoom, setZoom] = useState(1)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
   const [routes, setRoutes] = useState(true)
@@ -54,9 +62,14 @@ export default function AirportMap({ aircraft, selected, onSelect, blockedRunway
       <div className="map-canvas">
         <div className="map-weather">
           <Wind size={15} />
-          <span>320° / 05 KT</span>
+          <span>
+            {String(weather.windDirection).padStart(3, '0')}° /{' '}
+            {String(weather.windSpeed).padStart(2, '0')} KT
+          </span>
           <span className="weather-separator" />
-          <span>QNH 1012</span>
+          <span>
+            QNH {weather.qnh} · INFO {weather.information}
+          </span>
         </div>
         <svg
           className={`airport-svg ${drag ? 'dragging' : ''}`}
@@ -381,7 +394,7 @@ export default function AirportMap({ aircraft, selected, onSelect, blockedRunway
               </g>
             )}
             {aircraft
-              .filter((a) => a.phase !== 'complete')
+              .filter((a) => !['complete', 'scheduled'].includes(a.phase))
               .map((a) => (
                 <g
                   key={a.id}
