@@ -72,10 +72,15 @@ export function useVoiceDraft(enabled: boolean, onDraft: (text: string) => void)
       }
       r.onerror = (e) => {
         if (current.current !== r) return
+        // Some implementations never emit onend after a service failure.
+        // Release this instance so a deliberate retry can create a fresh one.
+        cancel()
         setError(
           e.error === 'not-allowed' || e.error === 'service-not-allowed'
             ? 'Microphone or speech-service permission was denied. Typed transmissions remain available.'
-            : `Speech recognition stopped (${e.error}). Review any existing draft or type the instruction.`,
+            : e.error === 'network'
+              ? 'Your browser could not reach its speech recognition service. Chromium-based browsers such as Vivaldi may expose this API without a working speech service. Try this page in current Google Chrome. If it also fails there, check your connection and whether a VPN or firewall blocks speech services. Your draft is preserved; nothing was transmitted.'
+              : `Speech recognition stopped (${e.error}). Review any existing draft or type the instruction.`,
         )
       }
       r.onend = () => {

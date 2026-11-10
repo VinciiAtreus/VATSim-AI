@@ -317,3 +317,45 @@ test('pausing cancels microphone capture and ignores a late speech result', asyn
   ).toBe(true)
   await expect(page.getByRole('textbox', { name: 'Controller transmission' })).toHaveValue('')
 })
+
+test('network speech failure without onend releases capture and permits an explicit retry', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    let attempt = 0
+    const w = window as unknown as { SpeechRecognition: unknown }
+    w.SpeechRecognition = class {
+      lang = ''
+      continuous = false
+      interimResults = false
+      onresult: ((e: unknown) => void) | null = null
+      onerror: ((e: { error: string }) => void) | null = null
+      onend: (() => void) | null = null
+      start() {
+        if (++attempt === 1) this.onerror?.({ error: 'network' })
+      }
+      stop() {
+        this.onresult?.({ results: [{ isFinal: true, 0: { transcript: 'MAS612, standby' } }] })
+        this.onend?.()
+      }
+      abort() {}
+    }
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
+  await page
+    .getByRole('textbox', { name: 'Controller transmission' })
+    .fill('MAS612, pushback approved')
+  await page.getByRole('button', { name: 'Dictate instruction', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Vivaldi')
+  await expect(page.getByRole('textbox', { name: 'Controller transmission' })).toHaveValue(
+    'MAS612, pushback approved',
+  )
+  await expect(page.getByRole('button', { name: 'Transmit clearance' })).toBeEnabled()
+  await page.getByRole('button', { name: 'Retry voice capture', exact: true }).click()
+  await page.getByRole('button', { name: 'Stop voice capture', exact: true }).click()
+  await expect(page.getByRole('textbox', { name: 'Controller transmission' })).toHaveValue(
+    'MAS612, standby',
+  )
+  await expect(page.getByRole('button', { name: 'Select MAS612' })).toContainText('AT STAND')
+})

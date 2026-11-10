@@ -1087,6 +1087,14 @@ export default function App() {
                 {voice.error && (
                   <p role="alert" className="voice-error">
                     {voice.error}
+                    <button
+                      type="button"
+                      className="text-button"
+                      disabled={!ready || !session.running || replayIndex !== null}
+                      onClick={voice.toggle}
+                    >
+                      Retry voice capture
+                    </button>
                   </p>
                 )}
                 {voice.listening && (
