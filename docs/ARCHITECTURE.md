@@ -21,9 +21,13 @@ Session engine ──► aircraft state + scripted readback + event snapshot
 - `src/sim/parser.ts`: constrained grammar; unknown or conflicting instructions are not guessed.
 - `src/sim/engine.ts`: immutable session updates, motion along routes, radio ownership, scripted readbacks, instructor events, and historical snapshots.
 - `src/components/AirportMap.tsx`: display geometry, layers, route overlay, pan/zoom and selection.
-- `src/App.tsx`: local session orchestration, controller/instructor UI, dialogs and export.
+- `src/sim/sessionCodec.ts`: bounded JSON validation and version 0.1 migration.
+- `src/storage/sessionStore.ts`: transactional IndexedDB checkpoints.
+- `src/hooks/useSession.ts`: startup recovery, serialized saves, storage status and save retry.
+- `src/components/SessionLibrary.tsx`: checkpoint library and import controls.
+- `src/App.tsx`: local session orchestration, controller/instructor UI, dialogs and export/import.
 
-The browser timer advances the clock in small steps while running; a background tab automatically pauses the exercise. Movement values are display-space demonstration values, not physical performance models. The approach aircraft is held at its scripted final setup until a supported instruction is applied.
+The browser timer advances the clock in small steps while running; a background tab automatically pauses the exercise. Movement values are display-space demonstration values, not physical performance models. A final approach progresses at 1.5 schematic units/second. The exercise decision point is 25 units before the runway threshold; absent clearance or an occupied runway causes a recorded automatic go-around. A cleared aircraft occupies the runway only at touchdown. Integration uses substeps no larger than one simulated second to avoid skipping transitions under acceleration. These are exercise model values, not published minima or validated aircraft dynamics.
 
 Event snapshots are deep copied. A replay snapshot includes aircraft state and runway obstruction state; it does not regenerate pilot dialogue. Event inspection pauses the live session, disables clearance transmission, and displays historical aircraft details.
 
@@ -53,3 +57,13 @@ Vercel serves a static Vite build. No environment variables, secret keys, databa
 7. Add validated performance and separation models only for reviewed training requirements.
 
 AI or speech-provider failure must leave an explainable session state and permit human pseudo-pilot takeover. Captured model outputs, not model calls, drive replay. Professional suitability must be assessed separately from functional software testing.
+
+## Local continuity contract (version 0.2)
+
+Recorded events and pauses trigger autosave; movement is checkpointed approximately every three seconds. Writes are serialized, and only a committed IndexedDB transaction marks a checkpoint saved. Startup tries newest records first, preserves unreadable records, and recovers the newest compatible checkpoint paused. Storage failure is visible and leaves training/export available. Closing a tab during a write can lose changes since the last committed checkpoint. No server or cross-device persistence is claimed. Concurrent editing of the same recovered exercise in multiple tabs is not supported.
+
+Manual restore/import validates the record before replacement, checkpoints the current exercise when storage is available, and forks the restored record under a fresh ID. Original checkpoints remain. Portable file import limits: 10 MB, 2,500 events, known dataset/scenario/engine version, finite movement values, valid radio/runway/phase data, consistent counters, ordered event IDs/times, and valid historical snapshots. Version 0.1 airborne landing states are migrated to the version 0.2 approach model; historical facts are retained. Record structure is validated; authenticity is not established.
+
+Export format: `vatsim-ai.session.v2`, engine `0.2.0`, dataset `wmkk-schematic-0.1`. No recorded audio, database authentication, or formal assessment evidence is provided.
+
+Browser checkpoint recovery and library restoration validate the same structure without the portable file-import history cap, so an exercise exceeding 2,500 events remains recoverable. The transmission engine rejects inputs exceeding 1,000 characters before recording their contents; a bounded instructor observation records the rejection.

@@ -40,3 +40,7 @@ Future operational rules must include: `ruleId`, `sourceUrl`, `sourceSection`, `
 Statuses: proposed → source-checked → SME-reviewed → scenario-tested → released. The current demonstration graph remains outside that operational release pipeline.
 
 No reviewer or approval is recorded until a real review occurs. Public accessibility does not itself establish redistribution rights for charts or other source assets.
+
+## Version 0.2 exercise model additions
+
+The moving final-approach speed (1.5 display units/second), decision offset (25 display units before threshold), and short-final reminder (20 exercise seconds) are developer-defined demonstration values. They are not asserted CAAM procedures, decision heights, minima, or aircraft performance. They require instructor and aircraft-model validation before professional use. Landing clearance and physical occupancy are separate simulation state. A runway obstruction can be injected on any supported runway.

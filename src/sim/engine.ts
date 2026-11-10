@@ -1,5 +1,14 @@
-import { initialAircraft, pilotRequest, RUNWAYS, SCENARIOS } from './airport'
+import {
+  AIRPORT_DATA,
+  ARRIVAL_MODEL,
+  arrivalDecisionSeconds,
+  initialAircraft,
+  pilotRequest,
+  RUNWAYS,
+  SCENARIOS,
+} from './airport'
 import { parseTransmission } from './parser'
+import { ENGINE_VERSION } from './version'
 import type { Aircraft, Command, Frequency, Point, RunwayId, Session, SimEvent } from './types'
 
 export function copyAircraft(aircraft: Aircraft[]): Aircraft[] {
@@ -31,7 +40,8 @@ export function record(
 export function createSession(scenarioId = 'morning'): Session {
   const validId = SCENARIOS.some((s) => s.id === scenarioId) ? scenarioId : 'morning'
   let s: Session = {
-    version: 1,
+    version: 2,
+    id: crypto.randomUUID(),
     scenarioId: validId,
     time: 0,
     running: false,
@@ -142,6 +152,11 @@ export function transmit(
   input: string,
   frequency: Frequency,
 ): { session: Session; error?: string } {
+  if (input.length > 1000) {
+    const error =
+      'Transmission exceeds the 1,000-character limit. Shorten the instruction; it was not transmitted.'
+    return { session: record(session, 'instructor', error, { severity: 'attention' }), error }
+  }
   const parsed = parseTransmission(input, session.aircraft)
   let s = { ...session, aircraft: copyAircraft(session.aircraft), attempted: session.attempted + 1 }
   s = record(s, 'controller', input.trim(), { frequency })
@@ -215,18 +230,13 @@ export function transmit(
       readback = `Runway ${a.runway}, cleared for takeoff, ${a.spoken}.`
       break
     case 'land':
-      a.phase = 'landing'
-      a.runwayOccupied = true
+      a.landingCleared = true
       a.clearance = `Cleared to land · runway ${a.runway}`
-      setRoute(a, [
-        { x: r.x, y: r.bottom - 45 },
-        { x: r.x, y: 290 },
-        { x: r.x + 60, y: 290 },
-      ])
       readback = `Runway ${a.runway}, cleared to land, ${a.spoken}.`
       break
     case 'goaround':
       a.phase = 'going-around'
+      a.landingCleared = false
       a.clearance = 'Go around'
       setRoute(a, [{ x: r.x, y: -110 }])
       readback = `Going around, ${a.spoken}.`
@@ -292,14 +302,30 @@ function advance(a: Aircraft, distance: number) {
   }
 }
 
-export function tick(session: Session, delta: number): Session {
-  if (!session.running || delta <= 0 || !Number.isFinite(delta)) return session
+function beginAutomaticGoAround(s: Session, a: Aircraft, reason: string): Session {
+  a.phase = 'going-around'
+  a.landingCleared = false
+  a.runwayOccupied = false
+  a.pending = false
+  a.clearance = 'Go around'
+  setRoute(a, [{ x: RUNWAYS[a.runway].x, y: -110 }])
+  s = record(s, 'pilot', `${a.spoken}, going around, ${reason}.`, {
+    aircraftId: a.id,
+    frequency: a.frequency,
+  })
+  return record(
+    s,
+    'instructor',
+    `${a.id}: automatic go-around — ${reason}. This is the exercise decision-point policy, not a published WMKK minimum.`,
+    { aircraftId: a.id, severity: 'critical' },
+  )
+}
+
+function integrate(session: Session, dt: number): Session {
   let s: Session = {
     ...session,
-    time: session.time + delta * session.speed,
-    aircraft: copyAircraft(session.aircraft),
+    time: session.time + dt,
   }
-  const dt = delta * session.speed
   for (const a of s.aircraft) {
     if (a.pending && s.time - a.requestAt >= 90 && !a.overdueReported) {
       a.overdueReported = true
@@ -309,6 +335,50 @@ export function tick(session: Session, delta: number): Session {
         `${a.id}: request waiting more than 90 seconds. Exercise coaching threshold; acknowledge when workload permits.`,
         { aircraftId: a.id, severity: 'attention' },
       )
+    }
+    if (a.phase === 'final') {
+      const runway = RUNWAYS[a.runway]
+      a.speed = 130
+      a.position = {
+        x: runway.x,
+        y: Math.max(runway.bottom, a.position.y - ARRIVAL_MODEL.approachSpeed * dt),
+      }
+      if (
+        !a.landingCleared &&
+        !a.approachCallMade &&
+        arrivalDecisionSeconds(a)! <= ARRIVAL_MODEL.shortFinalSeconds
+      ) {
+        a.approachCallMade = true
+        a.pending = true
+        a.requestAt = s.time
+        a.overdueReported = false
+        s = record(
+          s,
+          'pilot',
+          `${a.spoken}, short final runway ${a.runway}, request landing clearance.`,
+          { aircraftId: a.id, frequency: a.frequency },
+        )
+      }
+      if (
+        a.position.y <= runway.bottom + ARRIVAL_MODEL.decisionOffset &&
+        (!a.landingCleared || occupied(s, a.runway, a.id))
+      ) {
+        s = beginAutomaticGoAround(
+          s,
+          a,
+          !a.landingCleared ? 'landing clearance not received' : `runway ${a.runway} occupied`,
+        )
+      } else if (a.position.y <= runway.bottom) {
+        a.phase = 'landing'
+        a.runwayOccupied = true
+        a.speed = 110
+        setRoute(a, [
+          { x: runway.x, y: 290 },
+          { x: runway.x + 60, y: 290 },
+        ])
+        s = record(s, 'system', `${a.id}: touchdown on runway ${a.runway}.`, { aircraftId: a.id })
+      }
+      continue
     }
     const movement =
       (
@@ -374,9 +444,23 @@ export function tick(session: Session, delta: number): Session {
   return s
 }
 
+export function tick(session: Session, delta: number): Session {
+  if (!session.running || delta <= 0 || !Number.isFinite(delta)) return session
+  let s = { ...session, aircraft: copyAircraft(session.aircraft) }
+  let remaining = Math.min(delta * session.speed, 3600)
+  // Substeps prevent an accelerated clock from skipping an approach decision or phase transition.
+  while (remaining > 0.000001) {
+    const step = Math.min(remaining, 1)
+    s = integrate(s, step)
+    remaining -= step
+  }
+  return s
+}
+
 export function instructorEvent(
   session: Session,
   action: 'readback' | 'obstruction' | 'guidance',
+  runway: RunwayId = '32R',
 ): Session {
   if (action === 'readback')
     return record(
@@ -392,13 +476,13 @@ export function instructorEvent(
       'instructor',
       `Training guards ${session.guidance ? 'disabled: unsafe runway clearances can be applied and recorded' : 'enabled: occupied-runway clearances are held'}.`,
     )
-  const blockedRunway = session.blockedRunway ? null : '32R'
+  const blockedRunway = session.blockedRunway ? null : runway
   return record(
     { ...session, blockedRunway },
     'instructor',
     blockedRunway
-      ? 'Exercise event: inspection vehicle occupying runway 32R.'
-      : 'Exercise event: runway 32R obstruction removed.',
+      ? `Exercise event: inspection vehicle occupying runway ${blockedRunway}.`
+      : `Exercise event: runway ${session.blockedRunway} obstruction removed.`,
     { severity: blockedRunway ? 'attention' : 'info' },
   )
 }
@@ -410,9 +494,10 @@ export function formatTime(seconds: number): string {
 
 export function sessionExport(s: Session) {
   return {
-    schema: 'vatsim-ai.session.v1',
+    schema: 'vatsim-ai.session.v2',
+    engineVersion: ENGINE_VERSION,
     exportedAt: new Date().toISOString(),
-    dataset: 'wmkk-schematic-0.1',
+    dataset: AIRPORT_DATA.id,
     limitations: [
       'Illustrative geometry',
       'Simplified kinematics',

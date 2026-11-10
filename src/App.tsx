@@ -14,6 +14,8 @@ import {
   FileText,
   Flag,
   Headphones,
+  HardDrive,
+  FolderOpen,
   History,
   Info,
   Keyboard,
@@ -41,7 +43,20 @@ import {
   X,
 } from 'lucide-react'
 import AirportMap from './components/AirportMap'
-import { AIRPORT_DATA, PHASE_LABELS, RADIOS, RUNWAYS, SCENARIOS } from './sim/airport'
+import ModalShell from './components/ModalShell'
+import SessionLibrary from './components/SessionLibrary'
+import { useSession } from './hooks/useSession'
+import { MAX_SESSION_BYTES, decodeSession, forkSession, parseSessionFile } from './sim/sessionCodec'
+import { listSessions, type SavedSession } from './storage/sessionStore'
+import { ENGINE_VERSION } from './sim/version'
+import {
+  AIRPORT_DATA,
+  arrivalDecisionSeconds,
+  PHASE_LABELS,
+  RADIOS,
+  RUNWAYS,
+  SCENARIOS,
+} from './sim/airport'
 import {
   createSession,
   formatTime,
@@ -51,9 +66,9 @@ import {
   tick,
   transmit,
 } from './sim/engine'
-import type { Aircraft, Frequency, Session } from './sim/types'
+import type { Aircraft, Frequency, RunwayId, Session } from './sim/types'
 
-type Modal = 'scenarios' | 'reference' | 'debrief' | 'settings' | null
+type Modal = 'scenarios' | 'reference' | 'debrief' | 'settings' | 'sessions' | 'restore' | null
 type Action = { label: string; text: string; primary?: boolean }
 
 function actionsFor(a: Aircraft): Action[] {
@@ -133,74 +148,18 @@ function actionsFor(a: Aircraft): Action[] {
   return a.phase === 'complete' ? [] : [{ label: 'Standby', text: command('standby') }]
 }
 
-function ModalShell({
-  title,
-  eyebrow,
-  onClose,
-  children,
-  wide = false,
-}: {
-  title: string
-  eyebrow: string
-  onClose: () => void
-  children: React.ReactNode
-  wide?: boolean
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const before = document.activeElement as HTMLElement | null
-    ref.current?.focus()
-    return () => before?.focus()
-  }, [])
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div
-        className={`modal ${wide ? 'wide' : ''}`}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        tabIndex={-1}
-        ref={ref}
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key !== 'Tab') return
-          const items = ref.current?.querySelectorAll<HTMLElement>(
-            'button, input, select, textarea, a[href], [tabindex="0"]',
-          )
-          if (!items?.length) return
-          const first = items[0]
-          const last = items[items.length - 1]
-          if (
-            e.shiftKey &&
-            (document.activeElement === first || document.activeElement === ref.current)
-          ) {
-            e.preventDefault()
-            last.focus()
-          }
-          if (!e.shiftKey && document.activeElement === last) {
-            e.preventDefault()
-            first.focus()
-          }
-        }}
-      >
-        <div className="modal-header">
-          <div>
-            <p className="eyebrow">{eyebrow}</p>
-            <h2>{title}</h2>
-          </div>
-          <button className="icon-button" onClick={onClose} aria-label="Close dialog">
-            <X size={20} />
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  )
-}
-
 export default function App() {
-  const [session, setSession] = useState<Session>(() => createSession())
-  const stateRef = useRef(session)
+  const { session, stateRef, update, ready, saveStatus, saveNow, notice, dismissNotice } =
+    useSession()
+  const [savedSessions, setSavedSessions] = useState<SavedSession[]>([])
+  const [libraryLoading, setLibraryLoading] = useState(false)
+  const [libraryError, setLibraryError] = useState('')
+  const [obstructionRunway, setObstructionRunway] = useState<RunwayId>('32R')
+  const [pendingRestore, setPendingRestore] = useState<{
+    session: Session
+    migrated: boolean
+    source: string
+  } | null>(null)
   const [selectedId, setSelectedId] = useState('MAS612')
   const [frequency, setFrequency] = useState<Frequency>('121.650')
   const [filter, setFilter] = useState<'all' | 'departure' | 'arrival'>('all')
@@ -217,22 +176,16 @@ export default function App() {
   const commandInput = useRef<HTMLInputElement>(null)
   const transcriptEnd = useRef<HTMLDivElement>(null)
   const lastSpoken = useRef(0)
-  const update = useCallback((fn: (s: Session) => Session) => {
-    const next = fn(stateRef.current)
-    stateRef.current = next
-    setSession(next)
-  }, [])
-  const pause = useCallback(
-    () =>
-      update((s) =>
-        record(
-          { ...s, running: !s.running },
-          'system',
-          s.running ? 'Exercise paused by controller.' : 'Exercise running.',
-        ),
+  const pause = useCallback(() => {
+    if (!ready) return
+    update((s) =>
+      record(
+        { ...s, running: !s.running },
+        'system',
+        s.running ? 'Exercise paused by controller.' : 'Exercise running.',
       ),
-    [update],
-  )
+    )
+  }, [ready, update])
 
   useEffect(() => {
     let last = performance.now()
@@ -342,6 +295,10 @@ export default function App() {
     commandInput.current?.focus()
   }
   function send() {
+    if (!ready) {
+      setCommandError('Wait for the saved exercise to finish loading.')
+      return
+    }
     if (replayIndex !== null) {
       setCommandError('Return to the live session before transmitting.')
       return
@@ -359,12 +316,15 @@ export default function App() {
     }
     commandInput.current?.focus()
   }
-  function loadScenario(id: string) {
+  async function loadScenario(id: string) {
+    if (!ready) return
     if ((session.time > 0 || session.attempted > 0) && confirmScenario !== id) {
       setConfirmScenario(id)
       return
     }
+    await saveNow()
     window.speechSynthesis?.cancel()
+    lastSpoken.current = 0
     const next = createSession(id)
     update(() => next)
     setSelectedId('MAS612')
@@ -375,6 +335,71 @@ export default function App() {
     setModal(null)
     setConfirmScenario(null)
     setToast('Exercise loaded. Review the briefing, then start when ready.')
+  }
+  async function openLibrary() {
+    if (!ready) return
+    if (stateRef.current.running)
+      update((s) =>
+        record({ ...s, running: false }, 'system', 'Exercise paused to open saved sessions.'),
+      )
+    setModal('sessions')
+    setLibraryLoading(true)
+    setLibraryError('')
+    await saveNow()
+    try {
+      setSavedSessions(await listSessions())
+    } catch (error) {
+      setLibraryError(error instanceof Error ? error.message : 'Saved sessions could not be read.')
+    } finally {
+      setLibraryLoading(false)
+    }
+  }
+  async function importFile(file: File) {
+    setLibraryError('')
+    if (file.size > MAX_SESSION_BYTES) {
+      setLibraryError('File exceeds the 10 MB import limit.')
+      return
+    }
+    try {
+      const decoded = parseSessionFile(await file.text())
+      setPendingRestore({ ...decoded, source: file.name })
+      setModal('restore')
+    } catch (error) {
+      setLibraryError(error instanceof Error ? error.message : 'This file could not be imported.')
+    }
+  }
+  function prepareRestore(saved: SavedSession) {
+    try {
+      const decoded = decodeSession(saved.envelope, 'checkpoint')
+      setPendingRestore({ ...decoded, source: 'Browser checkpoint' })
+      setModal('restore')
+    } catch (error) {
+      setLibraryError(
+        error instanceof Error ? error.message : 'This checkpoint could not be opened.',
+      )
+    }
+  }
+  async function applyRestore() {
+    if (!pendingRestore) return
+    await saveNow()
+    const next = record(
+      forkSession(pendingRestore.session),
+      'system',
+      pendingRestore.migrated
+        ? 'Version 0.1 record migrated to the version 0.2 arrival model. Restored as a separate paused exercise.'
+        : 'Exercise restored as a separate paused copy. Original checkpoint preserved.',
+    )
+    window.speechSynthesis?.cancel()
+    lastSpoken.current = next.nextEventId - 1
+    update(() => next)
+    setSelectedId(next.aircraft[0].id)
+    setFrequency(next.aircraft[0].frequency)
+    setReplayIndex(null)
+    setCommand('')
+    setCommandError('')
+    setPendingRestore(null)
+    setModal(null)
+    setToast('Exercise restored paused. Resume when ready.')
   }
   function exportSession() {
     const blob = new Blob([JSON.stringify(sessionExport(stateRef.current), null, 2)], {
@@ -445,6 +470,15 @@ export default function App() {
           </button>
           <button
             className="rail-button"
+            aria-label="Saved sessions"
+            title="Saved exercises"
+            onClick={() => void openLibrary()}
+            disabled={!ready}
+          >
+            <FolderOpen size={20} />
+          </button>
+          <button
+            className="rail-button"
             aria-label="Session debrief"
             title="Session debrief"
             onClick={() => setModal('debrief')}
@@ -504,10 +538,22 @@ export default function App() {
               {audio ? <Volume2 size={17} /> : <VolumeX size={17} />}
             </button>
             <span className="header-separator" />
-            <span className="local-session">
-              <span className="live-dot" />
-              LOCAL SESSION
-            </span>
+            <button
+              className={`local-session save-indicator ${saveStatus.state}`}
+              onClick={() => void openLibrary()}
+              aria-label="Local save status"
+              disabled={!ready}
+              title={saveStatus.error ?? 'Checkpoints are stored in this browser on this site.'}
+            >
+              <HardDrive size={12} />
+              {saveStatus.state === 'saved'
+                ? 'SAVED LOCALLY'
+                : saveStatus.state === 'saving'
+                  ? 'SAVING…'
+                  : saveStatus.state === 'loading'
+                    ? 'OPENING SESSION…'
+                    : 'SAVE UNAVAILABLE'}
+            </button>
           </div>
         </header>
         <section className="session-bar" aria-label="Exercise controls">
@@ -545,7 +591,7 @@ export default function App() {
           <div className="playback">
             <button
               className={`play-button ${session.running ? 'running' : ''}`}
-              disabled={replayIndex !== null}
+              disabled={replayIndex !== null || !ready}
               onClick={pause}
               aria-label={
                 session.running
@@ -569,7 +615,7 @@ export default function App() {
                   aria-pressed={session.speed === speed}
                   className={session.speed === speed ? 'active' : ''}
                   onClick={() => update((s) => ({ ...s, speed }))}
-                  disabled={replayIndex !== null}
+                  disabled={replayIndex !== null || !ready}
                 >
                   {speed}×
                 </button>
@@ -588,6 +634,15 @@ export default function App() {
             </button>
           </div>
         </section>
+        {notice && (
+          <div className="continuity-notice" role="status">
+            <HardDrive size={14} />
+            <span>{notice}</span>
+            <button onClick={dismissNotice} aria-label="Dismiss restore notice">
+              <X size={14} />
+            </button>
+          </div>
+        )}
         <main className="workspace-grid">
           <aside className="traffic-panel" aria-label="Flight strips">
             <div className="panel-heading">
@@ -723,6 +778,34 @@ export default function App() {
             </button>
           </aside>
           <div className="centre-workspace">
+            {active.some((a) => a.phase === 'final') &&
+              (() => {
+                const arrival = active.find((a) => a.phase === 'final')!
+                const seconds = arrivalDecisionSeconds(arrival)!
+                return (
+                  <div
+                    className={`arrival-watch ${!arrival.landingCleared && seconds <= 20 ? 'urgent' : ''}`}
+                  >
+                    <Plane size={14} />
+                    <strong>{arrival.id}</strong>
+                    <span>FINAL {arrival.runway}</span>
+                    <span>
+                      {arrival.landingCleared
+                        ? 'LANDING CLEARED'
+                        : `${formatTime(seconds)} TO DECISION`}
+                    </span>
+                    <button
+                      onClick={() => {
+                        setSelectedId(arrival.id)
+                        setPanel('aircraft')
+                      }}
+                    >
+                      Select arrival
+                      <ArrowRight size={12} />
+                    </button>
+                  </div>
+                )
+              })()}
             <AirportMap
               aircraft={displayedAircraft}
               selected={selected.id}
@@ -840,12 +923,12 @@ export default function App() {
                     }}
                     autoComplete="off"
                     spellCheck={false}
-                    disabled={replayIndex !== null}
+                    disabled={replayIndex !== null || !ready}
                   />
                   <button
                     type="submit"
                     aria-label="Transmit clearance"
-                    disabled={!command.trim() || replayIndex !== null}
+                    disabled={!command.trim() || replayIndex !== null || !ready}
                   >
                     <span>Transmit</span>
                     <Send size={15} />
@@ -955,6 +1038,16 @@ export default function App() {
                     CURRENT CLEARANCE
                   </span>
                   <p>{selected.clearance}</p>
+                  {selected.phase === 'final' && (
+                    <div className={`approach-timer ${selected.landingCleared ? 'cleared' : ''}`}>
+                      <Clock3 size={13} />
+                      <span>
+                        {selected.landingCleared
+                          ? 'Landing clearance received'
+                          : `Exercise decision in ${formatTime(arrivalDecisionSeconds(selected)!)}`}
+                      </span>
+                    </div>
+                  )}
                 </div>
                 {selected.discrepancy && (
                   <div className="readback-warning">
@@ -988,7 +1081,7 @@ export default function App() {
                       key={action.label}
                       className={`suggested-action ${action.primary ? 'primary' : ''}`}
                       onClick={() => prepare(action.text)}
-                      disabled={replayIndex !== null}
+                      disabled={replayIndex !== null || !ready}
                     >
                       <span>
                         {action.primary ? <MessageSquare size={15} /> : <Radio size={14} />}
@@ -1047,16 +1140,31 @@ export default function App() {
                     aria-checked={session.guidance}
                     aria-label="Training guards"
                     className={`toggle-switch ${session.guidance ? 'on' : ''}`}
-                    disabled={replayIndex !== null}
+                    disabled={replayIndex !== null || !ready}
                     onClick={() => update((s) => instructorEvent(s, 'guidance'))}
                   >
                     <span />
                   </button>
                 </div>
                 <p className="eyebrow event-label">INJECT AN EVENT</p>
+                <label className="obstruction-selector">
+                  <span>Obstruction runway</span>
+                  <select
+                    aria-label="Obstruction runway"
+                    value={obstructionRunway}
+                    disabled={replayIndex !== null || !!session.blockedRunway}
+                    onChange={(e) => setObstructionRunway(e.target.value as RunwayId)}
+                  >
+                    {Object.keys(RUNWAYS).map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <button
                   className={`event-button ${session.injectReadback ? 'armed' : ''}`}
-                  disabled={replayIndex !== null}
+                  disabled={replayIndex !== null || !ready}
                   onClick={() => update((s) => instructorEvent(s, 'readback'))}
                 >
                   <MessageSquare size={17} />
@@ -1072,16 +1180,18 @@ export default function App() {
                 </button>
                 <button
                   className={`event-button ${session.blockedRunway ? 'armed' : ''}`}
-                  disabled={replayIndex !== null}
-                  onClick={() => update((s) => instructorEvent(s, 'obstruction'))}
+                  disabled={replayIndex !== null || !ready}
+                  onClick={() =>
+                    update((s) => instructorEvent(s, 'obstruction', obstructionRunway))
+                  }
                 >
                   <TriangleAlert size={17} />
                   <span>
                     <strong>Runway obstruction</strong>
                     <small>
                       {session.blockedRunway
-                        ? '32R occupied · click to clear'
-                        : 'Place inspection vehicle on 32R'}
+                        ? `${session.blockedRunway} occupied · click to clear`
+                        : `Place inspection vehicle on ${obstructionRunway}`}
                     </small>
                   </span>
                   {session.blockedRunway ? <Check size={16} /> : <PlusIcon />}
@@ -1131,7 +1241,7 @@ export default function App() {
                 <span className="live-dot" />
                 ENGINE READY
               </span>
-              <span>v0.1.0</span>
+              <span>v{ENGINE_VERSION}</span>
             </div>
           </aside>
         </main>
@@ -1175,6 +1285,82 @@ export default function App() {
             <X size={14} />
           </button>
         </div>
+      )}
+      {modal === 'sessions' && (
+        <SessionLibrary
+          records={savedSessions}
+          loading={libraryLoading}
+          error={libraryError}
+          status={saveStatus}
+          currentId={session.id}
+          onClose={() => setModal(null)}
+          onSave={() => void openLibrary()}
+          onExport={exportSession}
+          onImport={(file) => void importFile(file)}
+          onRestore={prepareRestore}
+        />
+      )}
+      {modal === 'restore' && pendingRestore && (
+        <ModalShell
+          title="Restore this exercise?"
+          eyebrow="REVIEW SESSION RECORD"
+          onClose={() => setModal('sessions')}
+        >
+          <div className="restore-summary">
+            <span className="eyebrow">
+              {SCENARIOS.find((s) => s.id === pendingRestore.session.scenarioId)?.code}
+            </span>
+            <h3>{SCENARIOS.find((s) => s.id === pendingRestore.session.scenarioId)?.title}</h3>
+            <dl>
+              <div>
+                <dt>Source</dt>
+                <dd>{pendingRestore.source}</dd>
+              </div>
+              <div>
+                <dt>Elapsed time</dt>
+                <dd>{formatTime(pendingRestore.session.time)}</dd>
+              </div>
+              <div>
+                <dt>Aircraft / events</dt>
+                <dd>
+                  {pendingRestore.session.aircraft.length} / {pendingRestore.session.events.length}
+                </dd>
+              </div>
+              <div>
+                <dt>Dataset</dt>
+                <dd>{AIRPORT_DATA.id}</dd>
+              </div>
+            </dl>
+          </div>
+          <p className="modal-intro">
+            This opens a separate copy with the clock paused. The current exercise is checkpointed
+            first if browser storage is available. Existing checkpoints are preserved.
+          </p>
+          {pendingRestore.migrated && (
+            <div className="migration-notice">
+              <Info size={16} />
+              <p>
+                This version 0.1 record will use the version 0.2 moving-arrival model when resumed.
+                Historical snapshots remain as originally recorded.
+              </p>
+            </div>
+          )}
+          {saveStatus.error && (
+            <div className="library-error" role="alert">
+              Local storage is unavailable. Export the current exercise before replacing it if you
+              need a copy.
+            </div>
+          )}
+          <div className="modal-footer">
+            <button className="secondary-button" onClick={() => setModal('sessions')}>
+              Cancel
+            </button>
+            <button className="primary-button" onClick={() => void applyRestore()}>
+              <History size={15} />
+              Restore paused
+            </button>
+          </div>
+        </ModalShell>
       )}
       {modal === 'scenarios' && (
         <ModalShell
@@ -1295,8 +1481,8 @@ export default function App() {
                 <Target size={19} />
                 <h3>A complete departure</h3>
                 <ol>
-                  <li>Approve pushback on ground.</li>
-                  <li>Start the exercise and wait for “ready to taxi”.</li>
+                  <li>Start the exercise and approve pushback on ground.</li>
+                  <li>Wait for “ready to taxi”.</li>
                   <li>Taxi via the demonstration route.</li>
                   <li>At the holding point, transfer to tower.</li>
                   <li>Select the tower frequency.</li>
@@ -1393,9 +1579,17 @@ export default function App() {
               Development prototype
             </h3>
             <p>
-              This release runs its simulation in your browser tab. Export history before
-              refreshing; sessions are not yet stored on a server.
+              The exercise is automatically checkpointed in this browser and reopens paused after
+              refresh. Use saved sessions to import or restore a record. Export a JSON copy to keep
+              it independently; no server storage is used.
             </p>
+            <button
+              className="secondary-button settings-library"
+              onClick={() => void openLibrary()}
+            >
+              <FolderOpen size={15} />
+              Open saved exercises
+            </button>
             <div className="settings-row">
               <span>
                 Pilot readback audio<small>Uses your browser’s speech synthesis</small>

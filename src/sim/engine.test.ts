@@ -110,11 +110,59 @@ describe('departure workflow', () => {
 })
 
 describe('arrival workflow', () => {
+  it('progresses toward the runway without occupying it before touchdown', () => {
+    const start = createSession()
+    const s = advance(start, 20)
+    const arrival = s.aircraft.find((a) => a.id === 'MAS1134')!
+    expect(arrival.position.y).toBe(750)
+    expect(arrival.phase).toBe('final')
+    expect(arrival.runwayOccupied).toBe(false)
+  })
+  it('calls short final once and goes around at the exercise decision point without clearance', () => {
+    let s = advance(createSession(), 60)
+    expect(s.events.filter((e) => e.text.includes('short final runway'))).toHaveLength(1)
+    s = advance(s, 15)
+    expect(s.aircraft.find((a) => a.id === 'MAS1134')!.phase).toBe('going-around')
+    expect(s.events.some((e) => e.text.includes('landing clearance not received'))).toBe(true)
+    expect(s.events.filter((e) => e.text.includes('short final runway'))).toHaveLength(1)
+  })
+  it('keeps landing clearance separate from runway occupancy and records touchdown', () => {
+    let s = send(createSession(), 'MAS1134, runway 32L cleared to land', '118.500')
+    expect(s.aircraft.find((a) => a.id === 'MAS1134')!).toMatchObject({
+      phase: 'final',
+      landingCleared: true,
+      runwayOccupied: false,
+    })
+    s = advance(s, 90)
+    expect(s.aircraft.find((a) => a.id === 'MAS1134')!).toMatchObject({
+      phase: 'landing',
+      runwayOccupied: true,
+    })
+    expect(s.events.some((e) => e.text.includes('touchdown on runway 32L'))).toBe(true)
+  })
+  it('goes around if a cleared arrival encounters an obstructed runway', () => {
+    let s = send(createSession(), 'MAS1134, runway 32L cleared to land', '118.500')
+    s = instructorEvent(s, 'obstruction', '32L')
+    s = advance(s, 75)
+    expect(s.aircraft.find((a) => a.id === 'MAS1134')!).toMatchObject({
+      phase: 'going-around',
+      runwayOccupied: false,
+      landingCleared: false,
+    })
+    expect(s.events.some((e) => e.text.includes('runway 32L occupied'))).toBe(true)
+  })
+  it('does not skip an automatic go-around at 4× or during a large tick', () => {
+    const s = tick({ ...createSession(), running: true, speed: 4 }, 30)
+    expect(s.aircraft.find((a) => a.id === 'MAS1134')!.phase).toBe('complete')
+    expect(s.events.some((e) => e.text.includes('automatic go-around'))).toBe(true)
+    expect(s.events.some((e) => e.text.includes('touchdown'))).toBe(false)
+  })
   it('lands, vacates, changes frequency, and taxis to the assigned stand', () => {
     let s = createSession()
     s = send(s, 'MAS1134, runway 32L cleared to land', '118.500')
-    expect(s.aircraft.find((a) => a.id === 'MAS1134')!.runwayOccupied).toBe(true)
-    s = advance(s, 35)
+    expect(s.aircraft.find((a) => a.id === 'MAS1134')!.runwayOccupied).toBe(false)
+    expect(s.aircraft.find((a) => a.id === 'MAS1134')!.landingCleared).toBe(true)
+    s = advance(s, 120)
     const arrival = () => s.aircraft.find((a) => a.id === 'MAS1134')!
     expect(arrival().phase).toBe('vacated')
     expect(arrival().runwayOccupied).toBe(false)
@@ -186,7 +234,7 @@ describe('instructor scenarios and evidence', () => {
   })
   it('exports the full session, data version, and limitations without a running clock', () => {
     const exported = sessionExport({ ...createSession(), running: true })
-    expect(exported.schema).toBe('vatsim-ai.session.v1')
+    expect(exported.schema).toBe('vatsim-ai.session.v2')
     expect(exported.session.running).toBe(false)
     expect(exported.limitations).toContain('Illustrative geometry')
   })

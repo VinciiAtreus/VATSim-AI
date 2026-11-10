@@ -6,7 +6,7 @@ A WMKK controller-workstation development prototype for desktop browsers. Built 
 
 ## Run locally
 
-Use Node.js 24 (minimum 22.12):
+Use Node.js 24:
 
 ```sh
 npm ci
@@ -15,7 +15,7 @@ npm run dev
 
 Open the local URL shown by Vite. Choose an exercise, review the reference, and start the simulation. Select an aircraft to prepare context-specific instructions, select the matching transmit frequency, then transmit.
 
-The **Departure fundamentals** exercise is the easiest complete workflow. See [its walkthrough](docs/EXERCISE_WMKK_02.md). The initial arrival in Morning movements remains at its scripted final setup until cleared to land or instructed to go around.
+The **Departure fundamentals** exercise is the easiest complete workflow. See [its walkthrough](docs/EXERCISE_WMKK_02.md). In **Morning movements**, MAS1134 progresses down final. Issue landing clearance before the exercise decision point (about 73 simulated seconds from the initial setup), or the scripted pilot goes around. This timing is an exercise policy, not a published WMKK minimum.
 
 ## Included
 
@@ -23,11 +23,15 @@ The **Departure fundamentals** exercise is the easiest complete workflow. See [i
 - Flight strips, traffic filtering, radio selection and typed clearances.
 - Departure, arrival, handoff, hold-short, line-up, go-around and stand-taxi states.
 - Scripted pilot readbacks; optional browser-generated readback audio.
+- Moving arrivals, one short-final reminder, touchdown-specific occupancy, and automatic exercise-policy go-arounds.
+- Local autosave, paused recovery, saved-exercise library, and validated JSON import.
 - Three exercises, instructor-controlled events and configurable occupied-runway guards.
 - Event snapshots, historical inspection, session JSON export, pause/speed controls and background auto-pause.
 - Responsive layout, keyboard shortcuts and modal keyboard focus handling.
 
-Sessions currently live only in the current browser tab. Export before refreshing to retain a session. JSON export is an evidence format; importing and continuous audio/video playback are not implemented.
+Exercises are automatically checkpointed in IndexedDB after recorded events and approximately every three seconds during movement. Refreshing restores the latest readable checkpoint **paused**. Open **Saved exercises** from the folder icon to save, export, import, or restore a separate paused copy. Browser storage is scoped to the current browser and site address; it is not server-backed or guaranteed archival storage. Clearing site data removes checkpoints. Export JSON for an independent copy.
+
+Import supports version 0.2 records and migrates version 0.1 exports, with an explicit model-change notice. Files are limited to 10 MB and 2,500 events; incompatible or malformed records are rejected before changing the exercise. Records are not authenticated assessment evidence. Continuous replay playback and audio recording are not implemented.
 
 ## Verify
 
@@ -54,6 +58,7 @@ Review a branch preview before merging to the production branch. An actual Verce
 
 ## Project documents
 
+- [Version 0.2 changes and review walkthrough](docs/RELEASE_0_2.md)
 - [Product requirements and milestone gates](docs/PRODUCT_REQUIREMENTS.md)
 - [WMKK source and validation register](docs/SOURCE_REGISTER.md)
 - [Departure exercise and acceptance cases](docs/EXERCISE_WMKK_02.md)
