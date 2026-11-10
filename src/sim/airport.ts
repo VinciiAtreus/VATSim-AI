@@ -9,6 +9,23 @@ export const AIRPORT_DATA = {
   sourceRegister: 'docs/SOURCE_REGISTER.md',
 } as const
 
+// Exercise timing in schematic display units; not a CAAM decision-height or minima model.
+export const ARRIVAL_MODEL = {
+  approachSpeed: 1.5,
+  decisionOffset: 25,
+  shortFinalSeconds: 20,
+} as const
+
+export function arrivalDecisionSeconds(aircraft: Aircraft): number | null {
+  if (aircraft.phase !== 'final') return null
+  return (
+    Math.max(
+      0,
+      aircraft.position.y - RUNWAYS[aircraft.runway].bottom - ARRIVAL_MODEL.decisionOffset,
+    ) / ARRIVAL_MODEL.approachSpeed
+  )
+}
+
 export const RUNWAYS: Record<
   RunwayId,
   {
@@ -137,6 +154,8 @@ const base = {
   holdReported: false,
   runwayOccupied: false,
   clearance: 'Awaiting instructions',
+  landingCleared: false,
+  approachCallMade: false,
 }
 export function initialAircraft(scenarioId: string): Aircraft[] {
   const aircraft: Aircraft[] = [
@@ -182,6 +201,8 @@ export function initialAircraft(scenarioId: string): Aircraft[] {
       runway: '32L',
       frequency: '118.500',
       clearance: 'Established final · awaiting landing clearance',
+      landingCleared: false,
+      approachCallMade: false,
     },
     {
       ...base,

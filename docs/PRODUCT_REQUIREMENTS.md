@@ -13,14 +13,14 @@ The first release is a development prototype. It is not an approved training dev
 - Selectable aircraft, flight strips, frequency selection, and typed transmissions.
 - Structured command parsing, phase checks, route limits, and explicit readbacks.
 - Continuous movement, hold-short endpoints, physical line-up movement, runway occupation state, handoffs, and scripted go-arounds.
-- An arrival remains at its scripted final setup position until cleared or instructed to go around. Approach progression, automatic go-arounds, actual performance, and separation are not modelled.
+- Arrivals progress down a schematic final approach. Landing clearance and runway occupancy are separate: occupancy begins at touchdown. An uncleared or obstructed arrival goes around at the exercise decision point. Approach movement and timing are demonstration values; actual performance and separation are not validated.
 - Three selectable exercises; pause, resume, 1× / 2× / 4×; background-tab auto-pause.
 - Instructor-triggered wrong-runway readback and runway obstruction.
 - Guided guards or unguided recording of an occupied-runway clearance.
 - Event snapshots, event-by-event inspection, session JSON export, optional browser-generated readback audio.
 - Responsive browser workstation; same-browser instructor panel, not a separate multi-user station.
 
-Pilot messages are scripted. There is no microphone input, speech recognition, external AI connection, competency scoring, persistence service, user authentication, or live VATSIM connection. Refreshing the tab clears the session. Export is the current retention mechanism.
+Pilot messages are scripted. There is no microphone input, speech recognition, external AI connection, competency scoring, server persistence service, user authentication, or live VATSIM connection. IndexedDB checkpoints recover paused after refresh. A local exercise library provides validated import and independent restored copies; exported JSON is the portable retention mechanism. Browser storage is not a professional records archive.
 
 ## First professional development objective
 

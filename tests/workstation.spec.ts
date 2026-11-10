@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { createSession, sessionExport } from '../src/sim/engine'
 
 test('controller selects an aircraft, transmits, and inspects a historical snapshot', async ({
   page,
@@ -77,4 +78,136 @@ test('mobile layout has no horizontal page overflow and supports dialog keyboard
   await expect(page.getByRole('dialog')).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toHaveCount(0)
+})
+
+test('automatically checkpoints a clearance and restores paused after reload', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
+  await page
+    .getByRole('textbox', { name: 'Controller transmission' })
+    .fill('MAS612, pushback approved')
+  await page.getByRole('button', { name: 'Transmit clearance' }).click()
+  await expect(page.getByRole('log')).toContainText('Pushback approved, Malaysian six one two.')
+  await expect(page.getByRole('button', { name: 'Local save status' })).toContainText(
+    'SAVED LOCALLY',
+  )
+  await page.reload()
+  await expect(
+    page.getByText('Previous exercise restored paused. Resume when you are ready.'),
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Select MAS612' })).toContainText('PUSHBACK')
+  await expect(page.getByRole('button', { name: 'Resume exercise' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Pause exercise' })).toHaveCount(0)
+  await expect(page.getByRole('log')).toContainText('Pushback approved, Malaysian six one two.')
+})
+
+test('imports an exported record into a separate paused copy and preserves checkpoints', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
+  await page
+    .getByRole('textbox', { name: 'Controller transmission' })
+    .fill('MAS612, pushback approved')
+  await page.getByRole('button', { name: 'Transmit clearance' }).click()
+  const downloading = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Export session', exact: true }).click()
+  const stream = await (await downloading).createReadStream()
+  const chunks = []
+  for await (const chunk of stream!) chunks.push(Buffer.from(chunk))
+  const buffer = Buffer.concat(chunks)
+  expect(JSON.parse(buffer.toString()).schema).toBe('vatsim-ai.session.v2')
+  await page.getByRole('button', { name: 'Saved sessions', exact: true }).click()
+  await page
+    .getByLabel('Import session JSON', { exact: true })
+    .setInputFiles({ name: 'departure.json', mimeType: 'application/json', buffer })
+  await expect(page.getByRole('dialog', { name: 'Restore this exercise?' })).toBeVisible()
+  await page.getByRole('button', { name: 'Restore paused', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Select MAS612' })).toContainText('PUSHBACK')
+  await expect(page.getByRole('button', { name: 'Resume exercise' })).toBeEnabled()
+  await page.getByRole('button', { name: 'Saved sessions', exact: true }).click()
+  await expect(page.getByText('2 saved exercises', { exact: true })).toBeVisible()
+})
+
+test('rejects malformed imports and keeps the current exercise', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Saved sessions', exact: true }).click()
+  await page.getByLabel('Import session JSON', { exact: true }).setInputFiles({
+    name: 'invalid.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from('{invalid'),
+  })
+  await expect(page.getByRole('alert')).toContainText('not valid JSON')
+  await expect(page.getByRole('dialog', { name: 'Saved exercises' })).toBeVisible()
+  await page.getByRole('button', { name: 'Close dialog' }).click()
+  await expect(page.getByRole('button', { name: 'Select MAS612' })).toContainText('AT STAND')
+})
+
+test('offers an explicit model migration for version 0.1 exports', async ({ page }) => {
+  const legacy = JSON.parse(JSON.stringify(sessionExport(createSession())))
+  legacy.schema = 'vatsim-ai.session.v1'
+  legacy.session.version = 1
+  delete legacy.engineVersion
+  delete legacy.session.id
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Saved sessions', exact: true }).click()
+  await page.getByLabel('Import session JSON', { exact: true }).setInputFiles({
+    name: 'v01.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(legacy)),
+  })
+  await expect(page.getByRole('dialog', { name: 'Restore this exercise?' })).toContainText(
+    'version 0.2 moving-arrival model',
+  )
+  await page.getByRole('button', { name: 'Restore paused', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Start exercise', exact: true })).toBeEnabled()
+})
+
+test('storage failure is visible and leaves text training and export available', async ({
+  page,
+}) => {
+  await page.addInitScript(() => Object.defineProperty(window, 'indexedDB', { value: undefined }))
+  await page.goto('/')
+  await expect(
+    page.getByText('Local storage is unavailable. You can still train and export JSON copies.'),
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Local save status' })).toContainText(
+    'SAVE UNAVAILABLE',
+  )
+  await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
+  await page
+    .getByRole('textbox', { name: 'Controller transmission' })
+    .fill('MAS612, pushback approved')
+  await page.getByRole('button', { name: 'Transmit clearance' }).click()
+  await expect(page.getByRole('log')).toContainText('Pushback approved, Malaysian six one two.')
+  await expect(page.getByRole('button', { name: 'Export session', exact: true })).toBeEnabled()
+})
+
+test('arrival progresses to a recorded automatic go-around when uncleared', async ({ page }) => {
+  await page.clock.install()
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Select MAS1134' }).click()
+  await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
+  await page.getByRole('button', { name: '4×', exact: true }).click()
+  await page.clock.runFor(19_000)
+  await expect(page.getByRole('button', { name: 'Select MAS1134' })).toContainText('GOING AROUND')
+  await page.getByRole('button', { name: /^Instructor/ }).click()
+  await expect(page.getByText(/automatic go-around — landing clearance not received/)).toBeVisible()
+})
+
+test('compact desktop keeps the transmission box above the status bar after recovery', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1200, height: 735 })
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: 'Local save status' })).toContainText(
+    'SAVED LOCALLY',
+  )
+  await page.reload()
+  await expect(
+    page.getByText('Previous exercise restored paused. Resume when you are ready.'),
+  ).toBeVisible()
+  const command = await page.locator('.command-form').boundingBox()
+  const footer = await page.locator('.status-bar').boundingBox()
+  expect(command!.y + command!.height).toBeLessThanOrEqual(footer!.y)
 })

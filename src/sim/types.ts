@@ -39,6 +39,8 @@ export type Aircraft = {
   holdReported: boolean
   runwayOccupied: boolean
   discrepancy?: { issued: RunwayId; readback: RunwayId }
+  landingCleared?: boolean
+  approachCallMade?: boolean
 }
 export type EventKind = 'system' | 'controller' | 'pilot' | 'instructor'
 export type SimEvent = {
@@ -53,7 +55,8 @@ export type SimEvent = {
   blockedRunway: RunwayId | null
 }
 export type Session = {
-  version: 1
+  version: 2
+  id: string
   scenarioId: string
   time: number
   running: boolean

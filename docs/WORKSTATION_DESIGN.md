@@ -33,7 +33,9 @@ The implementation is the interactive wireframe. This diagram records the panel 
 - Guard and event changes are recorded in history.
 - Scenario changes confirm reset if a session has started; the owner can export first.
 - Replay pauses the simulation and shows historical state; commands are disabled until returning to live.
-- A session is not a persisted record until exported. The UI and README state this limitation.
+- Checkpoints commit to browser-local storage, with explicit saved/saving/error status. Recovery is paused. Export remains the portable copy; no server archive is claimed.
+- Saved exercises and import both pause the current exercise. Import is reviewed before replacement and opens an independent copy.
+- A final-approach watch bar shows the arrival and remaining exercise decision time, including when another aircraft is selected.
 
 ## Responsive behaviour
 
