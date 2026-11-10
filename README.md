@@ -4,6 +4,10 @@ A WMKK controller-workstation development prototype for desktop browsers. Built 
 
 **Development status:** schematic airport geometry, simplified movement, scripted pilots. Not validated or approved for professional ATC training. No speech recognition, external AI, live VATSIM integration, or operational separation model is implemented.
 
+## Instructor workflow
+
+Take over an aircraft from the Instructor tab to execute or decline queued controller instructions, transmit manual pilot calls, and freeze individual aircraft motion. Operator actions and radio attribution persist in the session history. Add event-linked observations while inspecting replay, then use debrief filters to review radio, interventions, and observations. See the [version 0.3 walkthrough](docs/RELEASE_0_3.md) for the control boundaries.
+
 ## Run locally
 
 Use Node.js 24:
@@ -31,7 +35,7 @@ The **Departure fundamentals** exercise is the easiest complete workflow. See [i
 
 Exercises are automatically checkpointed in IndexedDB after recorded events and approximately every three seconds during movement. Refreshing restores the latest readable checkpoint **paused**. Open **Saved exercises** from the folder icon to save, export, import, or restore a separate paused copy. Browser storage is scoped to the current browser and site address; it is not server-backed or guaranteed archival storage. Clearing site data removes checkpoints. Export JSON for an independent copy.
 
-Import supports version 0.2 records and migrates version 0.1 exports, with an explicit model-change notice. Files are limited to 10 MB and 2,500 events; incompatible or malformed records are rejected before changing the exercise. Records are not authenticated assessment evidence. Continuous replay playback and audio recording are not implemented.
+Import supports version 0.3 records and migrates version 0.1/0.2 exports, with an explicit model-change notice. Files are limited to 10 MB and 2,500 events; incompatible or malformed records are rejected before changing the exercise. Records are not authenticated assessment evidence. Continuous replay playback and audio recording are not implemented.
 
 ## Verify
 
@@ -58,6 +62,7 @@ Review a branch preview before merging to the production branch. An actual Verce
 
 ## Project documents
 
+- [Version 0.3 instructor workflow and review walkthrough](docs/RELEASE_0_3.md)
 - [Version 0.2 changes and review walkthrough](docs/RELEASE_0_2.md)
 - [Product requirements and milestone gates](docs/PRODUCT_REQUIREMENTS.md)
 - [WMKK source and validation register](docs/SOURCE_REGISTER.md)

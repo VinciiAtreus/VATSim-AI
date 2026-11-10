@@ -156,6 +156,8 @@ const base = {
   clearance: 'Awaiting instructions',
   landingCleared: false,
   approachCallMade: false,
+  pilotMode: 'scripted' as const,
+  motionPaused: false,
 }
 export function initialAircraft(scenarioId: string): Aircraft[] {
   const aircraft: Aircraft[] = [

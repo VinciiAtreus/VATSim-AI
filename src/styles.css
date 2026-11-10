@@ -4021,3 +4021,128 @@ kbd {
   padding: 5px 7px;
   font: 10px var(--mono);
 }
+.pilot-station,
+.observation-editor {
+  margin: 18px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #192930;
+  min-width: 0;
+}
+.pilot-station .eyebrow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.pilot-station-status,
+.pilot-status {
+  color: var(--lime);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.pilot-station-help,
+.pilot-station small,
+.observation-anchor,
+.linked-event-label {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.pilot-station button,
+.observation-editor > button {
+  max-width: 100%;
+  white-space: normal;
+}
+.pilot-station form,
+.observation-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pilot-station label,
+.observation-editor label {
+  font-size: 11px;
+  color: var(--muted);
+}
+.pilot-station textarea,
+.observation-editor textarea,
+.observation-editor select {
+  width: 100%;
+  min-width: 0;
+  background: #111e25;
+  color: #dce4e6;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+  padding: 10px;
+  resize: vertical;
+}
+.pending-instruction {
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid #526449;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+.pending-instruction p,
+.observation-anchor p {
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.pilot-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.motion-frozen,
+.station-error {
+  color: #efc781;
+}
+.station-error {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.operator-radio-tag {
+  display: block;
+  font-size: 8px;
+  color: #efc781;
+  margin-top: 3px;
+}
+.review-filters {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 16px;
+}
+.review-filters button {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+}
+.review-filters button.active {
+  color: var(--lime);
+  background: #b9dd8c10;
+  border-color: #526449;
+}
+.timeline-kind.operator,
+.timeline-kind.note {
+  color: #efc781;
+}
+
+textarea:focus-visible {
+  outline: 2px solid var(--lime);
+  outline-offset: 2px;
+}
+.strip-operator-status {
+  color: #efc781;
+  font: 8px var(--mono);
+  margin-top: 9px;
+  line-height: 1.6;
+}

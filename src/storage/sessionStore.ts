@@ -95,9 +95,17 @@ export async function recoverSession(): Promise<{ session: Session | null; warni
       const decoded = decodeSession(record.envelope, 'checkpoint')
       return {
         session: decoded.session,
-        warning: skipped
-          ? 'An unreadable checkpoint was preserved; an earlier valid exercise was recovered.'
-          : undefined,
+        warning:
+          [
+            ...(skipped
+              ? ['An unreadable checkpoint was preserved; an earlier valid exercise was recovered.']
+              : []),
+            ...(decoded.migrated
+              ? [
+                  'Legacy checkpoint migrated to the current model with scripted pilots; restored paused. Review the model-change notes before resuming.',
+                ]
+              : []),
+          ].join(' ') || undefined,
       }
     } catch {
       skipped++

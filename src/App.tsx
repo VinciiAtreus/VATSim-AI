@@ -45,6 +45,8 @@ import {
 import AirportMap from './components/AirportMap'
 import ModalShell from './components/ModalShell'
 import SessionLibrary from './components/SessionLibrary'
+import PilotStation, { type SessionAction } from './components/PilotStation'
+import ObservationEditor from './components/ObservationEditor'
 import { useSession } from './hooks/useSession'
 import { MAX_SESSION_BYTES, decodeSession, forkSession, parseSessionFile } from './sim/sessionCodec'
 import { listSessions, type SavedSession } from './storage/sessionStore'
@@ -172,6 +174,9 @@ export default function App() {
   const [audio, setAudio] = useState(false)
   const [allFrequencies, setAllFrequencies] = useState(false)
   const [replayIndex, setReplayIndex] = useState<number | null>(null)
+  const [reviewFilter, setReviewFilter] = useState<
+    'all' | 'radio' | 'interventions' | 'observations'
+  >('all')
   const [confirmScenario, setConfirmScenario] = useState<string | null>(null)
   const commandInput = useRef<HTMLInputElement>(null)
   const transcriptEnd = useRef<HTMLDivElement>(null)
@@ -278,7 +283,10 @@ export default function App() {
   )
   const active = displayedAircraft.filter((a) => a.phase !== 'complete')
   const waiting = active.filter((a) => a.pending).length
-  const issues = session.events.filter((e) => e.kind === 'instructor' && e.severity !== 'info')
+  const issues = session.events.filter(
+    (e) =>
+      e.kind === 'note' || (['instructor', 'operator'].includes(e.kind) && e.severity !== 'info'),
+  )
   const messages = session.events
     .filter(
       (e) =>
@@ -288,6 +296,27 @@ export default function App() {
     )
     .slice(-40)
   const replayEvent = replayIndex === null ? null : session.events[replayIndex]
+  const observationAnchor =
+    (replayEvent?.kind === 'note'
+      ? session.events.find((e) => e.id === replayEvent.relatedEventId)
+      : replayEvent) ?? session.events.filter((e) => e.kind !== 'note').at(-1)!
+  const reviewEvents = session.events.filter(
+    (e) =>
+      reviewFilter === 'all' ||
+      (reviewFilter === 'radio' && ['controller', 'pilot'].includes(e.kind)) ||
+      (reviewFilter === 'interventions' && e.kind === 'operator') ||
+      (reviewFilter === 'observations' && issues.includes(e)),
+  )
+
+  function act(action: SessionAction) {
+    const result = action(stateRef.current)
+    update(() => result.session)
+    return result.error
+  }
+  function inspectEvent(eventId: number) {
+    const index = session.events.findIndex((e) => e.id === eventId)
+    if (index >= 0) replay(index)
+  }
 
   function prepare(text: string) {
     setCommand(text)
@@ -386,7 +415,7 @@ export default function App() {
       forkSession(pendingRestore.session),
       'system',
       pendingRestore.migrated
-        ? 'Version 0.1 record migrated to the version 0.2 arrival model. Restored as a separate paused exercise.'
+        ? 'Legacy record migrated to the current model with scripted pilots. Restored as a separate paused exercise.'
         : 'Exercise restored as a separate paused copy. Original checkpoint preserved.',
     )
     window.speechSynthesis?.cancel()
@@ -729,6 +758,12 @@ export default function App() {
                     </span>
                     <span className="strip-frequency">{a.frequency}</span>
                   </div>
+                  {a.pilotMode === 'operator' && (
+                    <div className="strip-operator-status">
+                      {a.motionPaused ? 'MOTION FROZEN' : 'PSEUDO-PILOT'}
+                      {a.queuedInstruction ? ' · INSTRUCTION PENDING' : ''}
+                    </div>
+                  )}
                 </button>
               ))}
               {visibleAircraft.length === 0 && (
@@ -790,9 +825,11 @@ export default function App() {
                     <strong>{arrival.id}</strong>
                     <span>FINAL {arrival.runway}</span>
                     <span>
-                      {arrival.landingCleared
-                        ? 'LANDING CLEARED'
-                        : `${formatTime(seconds)} TO DECISION`}
+                      {arrival.motionPaused
+                        ? 'MOTION FROZEN'
+                        : arrival.landingCleared
+                          ? 'LANDING CLEARED'
+                          : `${formatTime(seconds)} TO DECISION`}
                     </span>
                     <button
                       onClick={() => {
@@ -835,6 +872,9 @@ export default function App() {
                   onChange={(e) => setReplayIndex(Number(e.target.value))}
                 />
                 <span>{formatTime(replayEvent!.time)}</span>
+                <button className="text-button" onClick={() => setPanel('instructor')}>
+                  Annotate event
+                </button>
                 <button className="text-button" onClick={() => setReplayIndex(null)}>
                   Return to live
                   <ArrowRight size={14} />
@@ -867,6 +907,9 @@ export default function App() {
                     <time>{formatTime(e.time)}</time>
                     <span className="transcript-speaker">
                       {e.kind === 'controller' ? 'YOU' : e.aircraftId}
+                      {e.source === 'operator' && (
+                        <small className="operator-radio-tag">OPERATOR</small>
+                      )}
                     </span>
                     <p>{e.text}</p>
                   </div>
@@ -901,7 +944,9 @@ export default function App() {
                   </label>
                   <span className="scripted-label">
                     <span className="live-dot" />
-                    Scripted pilots
+                    {session.aircraft.some((a) => a.pilotMode === 'operator')
+                      ? 'Pseudo-pilot active'
+                      : 'Scripted pilots'}
                   </span>
                 </div>
                 <form
@@ -1038,6 +1083,12 @@ export default function App() {
                     CURRENT CLEARANCE
                   </span>
                   <p>{selected.clearance}</p>
+                  {selected.pilotMode === 'operator' && (
+                    <p className="pilot-status">
+                      PSEUDO-PILOT {selected.motionPaused ? '· MOTION FROZEN' : ''}
+                      {selected.queuedInstruction ? ' · INSTRUCTION PENDING' : ''}
+                    </p>
+                  )}
                   {selected.phase === 'final' && (
                     <div className={`approach-timer ${selected.landingCleared ? 'cleared' : ''}`}>
                       <Clock3 size={13} />
@@ -1122,7 +1173,15 @@ export default function App() {
                   <span className="eyebrow">EXERCISE DIRECTOR</span>
                   <h2>Instructor station</h2>
                   <p>Controlled events for procedural development and debrief.</p>
+                  <p>Local controls share this workstation; no separate instructor login.</p>
                 </div>
+                <PilotStation
+                  key={`${session.id}-${selected.id}`}
+                  aircraft={selected}
+                  running={session.running}
+                  disabled={replayIndex !== null || !ready}
+                  act={act}
+                />
                 <div className="instructor-control">
                   <div>
                     <ShieldCheck size={17} />
@@ -1209,19 +1268,23 @@ export default function App() {
                         <button
                           className={`observation ${e.severity}`}
                           key={e.id}
-                          onClick={() =>
-                            replay(session.events.findIndex((item) => item.id === e.id))
-                          }
+                          onClick={() => inspectEvent(e.kind === 'note' ? e.relatedEventId! : e.id)}
                         >
                           <div>
                             <time>{formatTime(e.time)}</time>
                             <span>
-                              {e.severity === 'critical' ? 'REVIEW REQUIRED' : 'COACHING NOTE'}
+                              {e.kind === 'note'
+                                ? 'INSTRUCTOR NOTE'
+                                : e.severity === 'critical'
+                                  ? 'REVIEW REQUIRED'
+                                  : 'COACHING NOTE'}
                             </span>
                           </div>
                           <p>{e.text}</p>
                           <small>
-                            Inspect event
+                            {e.kind === 'note'
+                              ? `Inspect linked event #${e.relatedEventId}`
+                              : 'Inspect event'}
                             <ArrowUpRight size={11} />
                           </small>
                         </button>
@@ -1234,6 +1297,14 @@ export default function App() {
                     </div>
                   )}
                 </div>
+                {ready && (
+                  <ObservationEditor
+                    key={session.id}
+                    anchor={observationAnchor}
+                    events={session.events}
+                    act={act}
+                  />
+                )}
               </div>
             )}
             <div className="inspector-bottom">
@@ -1340,8 +1411,9 @@ export default function App() {
             <div className="migration-notice">
               <Info size={16} />
               <p>
-                This version 0.1 record will use the version 0.2 moving-arrival model when resumed.
-                Historical snapshots remain as originally recorded.
+                This legacy record will use the current model with scripted pilots. Version 0.1
+                airborne landing states also adopt the moving-arrival model. Historical snapshots
+                remain as originally recorded.
               </p>
             </div>
           )}
@@ -1541,19 +1613,49 @@ export default function App() {
             Development evidence only. Counts are not competency scores. Select an event to inspect
             the airport snapshot recorded at that moment.
           </p>
+          <div className="review-filters" role="group" aria-label="Filter review events">
+            {(['all', 'radio', 'interventions', 'observations'] as const).map((filter) => (
+              <button
+                key={filter}
+                className={reviewFilter === filter ? 'active' : ''}
+                aria-pressed={reviewFilter === filter}
+                onClick={() => setReviewFilter(filter)}
+              >
+                {filter === 'all'
+                  ? 'All events'
+                  : filter === 'radio'
+                    ? 'Radio'
+                    : filter === 'interventions'
+                      ? 'Interventions'
+                      : 'Observations'}
+              </button>
+            ))}
+          </div>
           <div className="event-timeline">
-            {session.events.map((e, i) => (
+            {reviewEvents.map((e) => (
               <button
                 key={e.id}
                 className={`timeline-event ${e.severity}`}
-                onClick={() => replay(i)}
+                onClick={() => inspectEvent(e.kind === 'note' ? e.relatedEventId! : e.id)}
               >
                 <time>{formatTime(e.time)}</time>
-                <span className={`timeline-kind ${e.kind}`}>{e.kind}</span>
-                <p>{e.text}</p>
+                <span className={`timeline-kind ${e.kind}`}>
+                  {e.source === 'operator' ? 'pilot / op' : e.kind}
+                </span>
+                <p>
+                  {e.relatedEventId && (
+                    <small className="linked-event-label">
+                      Linked to event #{e.relatedEventId} ·{' '}
+                    </small>
+                  )}
+                  {e.text}
+                </p>
                 <ArrowUpRight size={14} />
               </button>
             ))}
+            {reviewEvents.length === 0 && (
+              <p className="debrief-note">No events in this view yet.</p>
+            )}
           </div>
           <div className="modal-footer">
             <button className="secondary-button" onClick={() => replay(0)}>
