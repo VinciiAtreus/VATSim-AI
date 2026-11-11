@@ -1,3 +1,6 @@
+import { preferredVoice, spokenReadback } from './sim/readback'
+import { createSimulation, enableContinuous } from './sim/engine'
+import { ARRIVAL_ROUTE } from './sim/geometry'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Activity,
@@ -22,6 +25,7 @@ import {
   LayoutDashboard,
   ListFilter,
   MessageSquare,
+  Mic,
   MoreHorizontal,
   Pause,
   Plane,
@@ -47,6 +51,12 @@ import ModalShell from './components/ModalShell'
 import SessionLibrary from './components/SessionLibrary'
 import PilotStation, { type SessionAction } from './components/PilotStation'
 import ObservationEditor from './components/ObservationEditor'
+import { downloadArtifact } from './components/ExerciseBuilder'
+import CoordinationPanel, { CoordinationDesk } from './components/CoordinationPanel'
+import WeatherPanel from './components/WeatherPanel'
+import DataReadiness from './components/DataReadiness'
+import { useVoiceDraft } from './hooks/useVoiceDraft'
+import { radioCsv, sessionReport } from './sim/reports'
 import { useSession } from './hooks/useSession'
 import { MAX_SESSION_BYTES, decodeSession, forkSession, parseSessionFile } from './sim/sessionCodec'
 import { listSessions, type SavedSession } from './storage/sessionStore'
@@ -59,21 +69,14 @@ import {
   RUNWAYS,
   SCENARIOS,
 } from './sim/airport'
-import {
-  createSession,
-  formatTime,
-  instructorEvent,
-  record,
-  sessionExport,
-  tick,
-  transmit,
-} from './sim/engine'
+import { formatTime, instructorEvent, record, sessionExport, tick, transmit } from './sim/engine'
 import type { Aircraft, Frequency, RunwayId, Session } from './sim/types'
 
-type Modal = 'scenarios' | 'reference' | 'debrief' | 'settings' | 'sessions' | 'restore' | null
+type Modal = 'simulation' | 'reference' | 'debrief' | 'settings' | 'sessions' | 'restore' | null
 type Action = { label: string; text: string; primary?: boolean }
 
 function actionsFor(a: Aircraft): Action[] {
+  if (a.phase === 'scheduled') return []
   const r = RUNWAYS[a.runway]
   const command = (text: string) => `${a.id}, ${text}`
   if (a.discrepancy)
@@ -145,7 +148,11 @@ function actionsFor(a: Aircraft): Action[] {
     ]
   if (a.phase === 'vacated')
     return [
-      { label: 'Taxi to stand', text: command(`taxi to stand ${a.stand} via C`), primary: true },
+      {
+        label: 'Taxi to stand',
+        text: command(`taxi to stand ${a.stand} via ${ARRIVAL_ROUTE}`),
+        primary: true,
+      },
     ]
   return a.phase === 'complete' ? [] : [{ label: 'Standby', text: command('standby') }]
 }
@@ -177,17 +184,67 @@ export default function App() {
   const [reviewFilter, setReviewFilter] = useState<
     'all' | 'radio' | 'interventions' | 'observations'
   >('all')
-  const [confirmScenario, setConfirmScenario] = useState<string | null>(null)
+  const [replayPlaying, setReplayPlaying] = useState(false)
+  const [replayRate, setReplayRate] = useState(1)
+  const [voiceRate, setVoiceRate] = useState(0.95)
+  const [readbackVoices, setReadbackVoices] = useState<SpeechSynthesisVoice[]>([])
+  const [voiceURI, setVoiceURI] = useState(() => {
+    try {
+      return localStorage.getItem('vatsim-ai.readback-voice') ?? ''
+    } catch {
+      return ''
+    }
+  })
+  useEffect(() => {
+    if (!('speechSynthesis' in window)) return
+    const load = () =>
+      setReadbackVoices(window.speechSynthesis.getVoices().filter((v) => /^en\b/i.test(v.lang)))
+    load()
+    window.speechSynthesis.addEventListener('voiceschanged', load)
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', load)
+  }, [])
+  const readbackVoice =
+    readbackVoices.find((v) => v.voiceURI === voiceURI) ?? preferredVoice(readbackVoices)
+  function speakReadback(text: string, preview = false) {
+    if (!('speechSynthesis' in window)) return
+    if (preview) window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(spokenReadback(text))
+    if (readbackVoice) utterance.voice = readbackVoice
+    utterance.lang = readbackVoice?.lang ?? 'en-GB'
+    utterance.rate = voiceRate
+    utterance.pitch = 1
+    window.speechSynthesis.speak(utterance)
+  }
+
   const commandInput = useRef<HTMLInputElement>(null)
   const transcriptEnd = useRef<HTMLDivElement>(null)
   const lastSpoken = useRef(0)
+  const voice = useVoiceDraft(
+    ready && session.running && replayIndex === null && modal === null,
+    (text) => {
+      if (!stateRef.current.running || document.hidden || replayIndex !== null || modal) return
+      setCommand(text)
+      setCommandError('')
+      update((s) => record(s, 'system', `Speech draft prepared for controller review: ${text}`))
+      setToast('Voice draft ready. Check callsign, runway, route and frequency, then transmit.')
+    },
+  )
+  useEffect(() => {
+    if (!replayPlaying || replayIndex === null || modal) return
+    if (replayIndex >= session.events.length - 1) {
+      setReplayPlaying(false)
+      return
+    }
+    const id = window.setTimeout(() => setReplayIndex(replayIndex + 1), 1000 / replayRate)
+    return () => window.clearTimeout(id)
+  }, [replayPlaying, replayIndex, replayRate, session.events.length, modal])
   const pause = useCallback(() => {
     if (!ready) return
     update((s) =>
       record(
         { ...s, running: !s.running },
         'system',
-        s.running ? 'Exercise paused by controller.' : 'Exercise running.',
+        s.running ? 'Simulation paused by controller.' : 'Simulation running.',
       ),
     )
   }, [ready, update])
@@ -206,7 +263,7 @@ export default function App() {
           record(
             { ...s, running: false },
             'system',
-            'Exercise paused: browser tab is in the background.',
+            'Simulation paused: browser tab is in the background.',
           ),
         )
     }
@@ -225,26 +282,19 @@ export default function App() {
     transcriptEnd.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [session.events.length, frequency, allFrequencies])
   useEffect(() => {
-    const latest = session.events.filter((e) => e.kind === 'pilot').at(-1)
-    if (!latest || latest.id <= lastSpoken.current) return
-    lastSpoken.current = latest.id
-    if (audio && 'speechSynthesis' in window) {
-      const voice = new SpeechSynthesisUtterance(
-        latest.text
-          .replace(/32R/g, 'three two right')
-          .replace(/32L/g, 'three two left')
-          .replace(/\b33\b/g, 'three three'),
-      )
-      voice.lang = 'en-GB'
-      voice.rate = 1
-      window.speechSynthesis.speak(voice)
-    }
-  }, [session.events, audio])
+    const pending = session.events.filter((e) => e.kind === 'pilot' && e.id > lastSpoken.current)
+    if (!pending.length) return
+    lastSpoken.current = pending.at(-1)!.id
+    if (audio && session.running) for (const event of pending) speakReadback(event.text)
+  }, [session.events, audio, voiceRate, readbackVoice, session.running])
+  useEffect(() => {
+    if (!session.running) window.speechSynthesis?.cancel()
+  }, [session.running])
   useEffect(() => {
     const handle = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setModal(null)
-        setConfirmScenario(null)
+
         return
       }
       if (
@@ -271,7 +321,14 @@ export default function App() {
     return () => window.removeEventListener('keydown', handle)
   }, [pause, modal, replayIndex])
 
-  const scenario = SCENARIOS.find((s) => s.id === session.scenarioId)!
+  const scenario = {
+    ...(SCENARIOS.find((s) => s.id === session.scenarioId) ?? {
+      code: 'WMKK–CUSTOM',
+      category: 'LOCAL LESSON',
+    }),
+    title: session.exercise.title,
+    objective: session.exercise.objective,
+  }
   const displayedAircraft =
     replayIndex === null ? session.aircraft : session.events[replayIndex].snapshot
   const selected = displayedAircraft.find((a) => a.id === selectedId) ?? displayedAircraft[0]
@@ -281,7 +338,7 @@ export default function App() {
       (filter === 'all' || a.operation === filter) &&
       `${a.id} ${a.type} ${a.stand}`.toLowerCase().includes(search.toLowerCase()),
   )
-  const active = displayedAircraft.filter((a) => a.phase !== 'complete')
+  const active = displayedAircraft.filter((a) => !['complete', 'scheduled'].includes(a.phase))
   const waiting = active.filter((a) => a.pending).length
   const issues = session.events.filter(
     (e) =>
@@ -297,9 +354,10 @@ export default function App() {
     .slice(-40)
   const replayEvent = replayIndex === null ? null : session.events[replayIndex]
   const observationAnchor =
-    (replayEvent?.kind === 'note'
+    (replayEvent && ['note', 'assessment'].includes(replayEvent.kind)
       ? session.events.find((e) => e.id === replayEvent.relatedEventId)
-      : replayEvent) ?? session.events.filter((e) => e.kind !== 'note').at(-1)!
+      : replayEvent) ??
+    session.events.filter((e) => !['note', 'assessment'].includes(e.kind)).at(-1)!
   const reviewEvents = session.events.filter(
     (e) =>
       reviewFilter === 'all' ||
@@ -324,8 +382,12 @@ export default function App() {
     commandInput.current?.focus()
   }
   function send() {
+    if (voice.listening) {
+      setCommandError('Stop voice capture and review the draft before transmitting.')
+      return
+    }
     if (!ready) {
-      setCommandError('Wait for the saved exercise to finish loading.')
+      setCommandError('Wait for the saved session to finish loading.')
       return
     }
     if (replayIndex !== null) {
@@ -333,7 +395,7 @@ export default function App() {
       return
     }
     if (!session.running) {
-      setCommandError('Start or resume the exercise before transmitting.')
+      setCommandError('Start or resume the simulation before transmitting.')
       return
     }
     const result = transmit(stateRef.current, command, frequency)
@@ -345,31 +407,11 @@ export default function App() {
     }
     commandInput.current?.focus()
   }
-  async function loadScenario(id: string) {
-    if (!ready) return
-    if ((session.time > 0 || session.attempted > 0) && confirmScenario !== id) {
-      setConfirmScenario(id)
-      return
-    }
-    await saveNow()
-    window.speechSynthesis?.cancel()
-    lastSpoken.current = 0
-    const next = createSession(id)
-    update(() => next)
-    setSelectedId('MAS612')
-    setFrequency('121.650')
-    setReplayIndex(null)
-    setCommand('')
-    setCommandError('')
-    setModal(null)
-    setConfirmScenario(null)
-    setToast('Exercise loaded. Review the briefing, then start when ready.')
-  }
   async function openLibrary() {
     if (!ready) return
     if (stateRef.current.running)
       update((s) =>
-        record({ ...s, running: false }, 'system', 'Exercise paused to open saved sessions.'),
+        record({ ...s, running: false }, 'system', 'Simulation paused to open the archive.'),
       )
     setModal('sessions')
     setLibraryLoading(true)
@@ -412,11 +454,13 @@ export default function App() {
     if (!pendingRestore) return
     await saveNow()
     const next = record(
-      forkSession(pendingRestore.session),
+      pendingRestore.session.simulation
+        ? forkSession(pendingRestore.session)
+        : enableContinuous(forkSession(pendingRestore.session)),
       'system',
       pendingRestore.migrated
-        ? 'Legacy record migrated to the current model with scripted pilots. Restored as a separate paused exercise.'
-        : 'Exercise restored as a separate paused copy. Original checkpoint preserved.',
+        ? 'Legacy record migrated to the current model. Existing pilot controls are retained where supported. Restored as a separate paused session.'
+        : 'Session restored as a separate paused copy. Original checkpoint preserved.',
     )
     window.speechSynthesis?.cancel()
     lastSpoken.current = next.nextEventId - 1
@@ -424,11 +468,12 @@ export default function App() {
     setSelectedId(next.aircraft[0].id)
     setFrequency(next.aircraft[0].frequency)
     setReplayIndex(null)
+    setReplayPlaying(false)
     setCommand('')
     setCommandError('')
     setPendingRestore(null)
     setModal(null)
-    setToast('Exercise restored paused. Resume when ready.')
+    setToast('Session restored paused. Resume when ready.')
   }
   function exportSession() {
     const blob = new Blob([JSON.stringify(sessionExport(stateRef.current), null, 2)], {
@@ -445,6 +490,7 @@ export default function App() {
   function replay(index: number) {
     update((s) => ({ ...s, running: false }))
     setReplayIndex(index)
+    setReplayPlaying(false)
     setModal(null)
     setCommandError('')
   }
@@ -488,11 +534,10 @@ export default function App() {
           </button>
           <button
             className="rail-button"
-            aria-label="Choose exercise"
-            title="Exercises"
+            aria-label="Simulation setup"
+            title="Simulation setup"
             onClick={() => {
-              setConfirmScenario(null)
-              setModal('scenarios')
+              setModal('simulation')
             }}
           >
             <Radar size={21} />
@@ -500,7 +545,7 @@ export default function App() {
           <button
             className="rail-button"
             aria-label="Saved sessions"
-            title="Saved exercises"
+            title="Session archive"
             onClick={() => void openLibrary()}
             disabled={!ready}
           >
@@ -545,7 +590,7 @@ export default function App() {
             <span className="product-edition">CONTROLLER WORKSTATION</span>
           </div>
           <div className="header-breadcrumb">
-            <span>Training environment</span>
+            <span>ATC simulator</span>
             <ChevronRight size={13} />
             <strong>WMKK</strong>
           </div>
@@ -585,7 +630,7 @@ export default function App() {
             </button>
           </div>
         </header>
-        <section className="session-bar" aria-label="Exercise controls">
+        <section className="session-bar" aria-label="Simulation controls">
           <div className="airport-ident">
             <span className="airport-code">WMKK</span>
             <div>
@@ -599,16 +644,15 @@ export default function App() {
           <button
             className="exercise-selector"
             onClick={() => {
-              setConfirmScenario(null)
-              setModal('scenarios')
+              setModal('simulation')
             }}
           >
             <span className="exercise-icon">
               <FileText size={17} />
             </span>
             <span>
-              <small>{scenario.code}</small>
-              <strong>{scenario.title}</strong>
+              <small>WMKK · CONTINUOUS</small>
+              <strong>{session.simulation ? 'Airport operations' : 'Archived session'}</strong>
             </span>
             <ChevronDown size={14} />
           </button>
@@ -624,10 +668,10 @@ export default function App() {
               onClick={pause}
               aria-label={
                 session.running
-                  ? 'Pause exercise'
+                  ? 'Pause simulation'
                   : session.time
-                    ? 'Resume exercise'
-                    : 'Start exercise'
+                    ? 'Resume simulation'
+                    : 'Start simulation'
               }
             >
               {session.running ? (
@@ -635,7 +679,9 @@ export default function App() {
               ) : (
                 <Play size={14} fill="currentColor" />
               )}
-              <span>{session.running ? 'Pause' : session.time ? 'Resume' : 'Start exercise'}</span>
+              <span>
+                {session.running ? 'Pause' : session.time ? 'Resume' : 'Start simulation'}
+              </span>
             </button>
             <div className="speed-group" aria-label="Simulation speed">
               {([1, 2, 4] as const).map((speed) => (
@@ -796,9 +842,14 @@ export default function App() {
             <div className="briefing-card">
               <div>
                 <Target size={16} />
-                <span>EXERCISE OBJECTIVE</span>
+                <span>AIRPORT OPERATIONS</span>
               </div>
-              <p>{scenario.objective}</p>
+              <p>
+                Control WMKK ground and tower.{' '}
+                {session.simulation?.trafficEnabled
+                  ? 'New traffic replenishes after departures, arrivals and go-arounds.'
+                  : 'Automatic traffic is paused.'}
+              </p>
               <button onClick={() => setModal('reference')}>
                 View command reference
                 <ArrowRight size={13} />
@@ -807,7 +858,7 @@ export default function App() {
             <button className="dataset-note" onClick={() => setModal('settings')}>
               <Info size={14} />
               <span>
-                Schematic airport data<small>Procedure validation pending</small>
+                CAAM chart trace<small>Procedure validation pending</small>
               </span>
               <ChevronRight size={13} />
             </button>
@@ -844,6 +895,7 @@ export default function App() {
                 )
               })()}
             <AirportMap
+              weather={replayIndex === null ? session.weather : session.events[replayIndex].weather}
               aircraft={displayedAircraft}
               selected={selected.id}
               onSelect={(id) => {
@@ -860,6 +912,24 @@ export default function App() {
             {replayIndex !== null && (
               <div className="replay-bar">
                 <History size={15} />
+                <button
+                  className="text-button"
+                  aria-label={replayPlaying ? 'Pause replay' : 'Play replay'}
+                  onClick={() => setReplayPlaying(!replayPlaying)}
+                >
+                  {replayPlaying ? <Pause size={14} /> : <Play size={14} />}
+                </button>
+                <select
+                  aria-label="Replay events per second"
+                  value={replayRate}
+                  onChange={(e) => setReplayRate(Number(e.target.value))}
+                >
+                  {[1, 2, 4].map((rate) => (
+                    <option key={rate} value={rate}>
+                      {rate} event{rate > 1 ? 's' : ''}/s
+                    </option>
+                  ))}
+                </select>
                 <span>
                   EVENT {replayIndex + 1}/{session.events.length}
                 </span>
@@ -875,7 +945,13 @@ export default function App() {
                 <button className="text-button" onClick={() => setPanel('instructor')}>
                   Annotate event
                 </button>
-                <button className="text-button" onClick={() => setReplayIndex(null)}>
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    setReplayIndex(null)
+                    setReplayPlaying(false)
+                  }}
+                >
                   Return to live
                   <ArrowRight size={14} />
                 </button>
@@ -956,7 +1032,20 @@ export default function App() {
                     send()
                   }}
                 >
-                  <Keyboard size={17} />
+                  <button
+                    type="button"
+                    className={`voice-button ${voice.listening ? 'listening' : ''}`}
+                    aria-label={voice.listening ? 'Stop voice capture' : 'Dictate instruction'}
+                    title={
+                      voice.supported
+                        ? 'Speech drafts require review before transmission. Your browser may use an online recognition service.'
+                        : 'Speech recognition unavailable; use text.'
+                    }
+                    disabled={!ready || !session.running || replayIndex !== null}
+                    onClick={voice.toggle}
+                  >
+                    <Mic size={17} />
+                  </button>
                   <input
                     ref={commandInput}
                     aria-label="Controller transmission"
@@ -973,12 +1062,30 @@ export default function App() {
                   <button
                     type="submit"
                     aria-label="Transmit clearance"
-                    disabled={!command.trim() || replayIndex !== null || !ready}
+                    disabled={!command.trim() || replayIndex !== null || !ready || voice.listening}
                   >
                     <span>Transmit</span>
                     <Send size={15} />
                   </button>
                 </form>
+                {voice.error && (
+                  <p role="alert" className="voice-error">
+                    {voice.error}
+                    <button
+                      type="button"
+                      className="text-button"
+                      disabled={!ready || !session.running || replayIndex !== null}
+                      onClick={voice.toggle}
+                    >
+                      Retry voice capture
+                    </button>
+                  </p>
+                )}
+                {voice.listening && (
+                  <p role="status" className="voice-status">
+                    Listening… stop capture when finished. Review the draft before transmitting.
+                  </p>
+                )}
                 {commandError ? (
                   <p className="command-error" role="alert">
                     <TriangleAlert size={12} />
@@ -986,7 +1093,7 @@ export default function App() {
                   </p>
                 ) : (
                   <div className="command-help">
-                    <span>Typed radio · full callsign required</span>
+                    <span>Text / reviewed voice · full callsign required</span>
                     <button onClick={() => setModal('reference')}>
                       Command reference
                       <ArrowUpRight size={11} />
@@ -1010,7 +1117,7 @@ export default function App() {
                 onClick={() => setPanel('instructor')}
               >
                 <ShieldCheck size={15} />
-                Instructor
+                Operations
                 {issues.length > 0 && <span className="issue-count">{issues.length}</span>}
               </button>
             </div>
@@ -1064,7 +1171,7 @@ export default function App() {
                   <div>
                     <span>GROUND SPEED</span>
                     <strong>
-                      {selected.speed}
+                      {Math.round(selected.speed)}
                       <small> KT</small>
                     </strong>
                   </div>
@@ -1095,7 +1202,7 @@ export default function App() {
                       <span>
                         {selected.landingCleared
                           ? 'Landing clearance received'
-                          : `Exercise decision in ${formatTime(arrivalDecisionSeconds(selected)!)}`}
+                          : `Go-around decision in ${formatTime(arrivalDecisionSeconds(selected)!)}`}
                       </span>
                     </div>
                   )}
@@ -1144,7 +1251,9 @@ export default function App() {
                   {actions.length === 0 && (
                     <div className="completed-message">
                       <CheckCheck size={18} />
-                      Aircraft exercise complete
+                      {selected.phase === 'scheduled'
+                        ? `Enters simulation at ${formatTime(selected.activationTime)}`
+                        : 'Aircraft transferred / parked'}
                     </div>
                   )}
                   <p className="suggestion-note">
@@ -1153,15 +1262,23 @@ export default function App() {
                     Review, then transmit on the correct frequency.
                   </p>
                 </div>
+                <CoordinationPanel
+                  key={`${session.id}-${selected.id}`}
+                  aircraft={selected}
+                  items={replayEvent?.coordination ?? session.coordination}
+                  required={session.exercise.requireCoordination}
+                  disabled={!ready || !session.running || replayIndex !== null}
+                  act={act}
+                />
                 <div className="instructor-prompt">
                   <span className="instructor-avatar">
                     <ShieldCheck size={18} />
                   </span>
                   <div>
-                    <strong>Your instructor station</strong>
+                    <strong>Your controller station</strong>
                     <p>Control events and review the session.</p>
                     <button onClick={() => setPanel('instructor')}>
-                      Open instructor controls
+                      Open operations controls
                       <ArrowRight size={12} />
                     </button>
                   </div>
@@ -1170,8 +1287,8 @@ export default function App() {
             ) : (
               <div className="instructor-content">
                 <div className="instructor-intro">
-                  <span className="eyebrow">EXERCISE DIRECTOR</span>
-                  <h2>Instructor station</h2>
+                  <span className="eyebrow">TRAFFIC & AIRPORT</span>
+                  <h2>Operations station</h2>
                   <p>Controlled events for procedural development and debrief.</p>
                   <p>Local controls share this workstation; no separate instructor login.</p>
                 </div>
@@ -1180,6 +1297,17 @@ export default function App() {
                   aircraft={selected}
                   running={session.running}
                   disabled={replayIndex !== null || !ready}
+                  act={act}
+                />
+                <WeatherPanel
+                  key={`weather-${session.id}`}
+                  weather={session.weather}
+                  disabled={!ready || replayIndex !== null}
+                  act={act}
+                />
+                <CoordinationDesk
+                  items={replayEvent?.coordination ?? session.coordination}
+                  disabled={!ready || replayIndex !== null}
                   act={act}
                 />
                 <div className="instructor-control">
@@ -1268,7 +1396,11 @@ export default function App() {
                         <button
                           className={`observation ${e.severity}`}
                           key={e.id}
-                          onClick={() => inspectEvent(e.kind === 'note' ? e.relatedEventId! : e.id)}
+                          onClick={() =>
+                            inspectEvent(
+                              ['note', 'assessment'].includes(e.kind) ? e.relatedEventId! : e.id,
+                            )
+                          }
                         >
                           <div>
                             <time>{formatTime(e.time)}</time>
@@ -1293,13 +1425,13 @@ export default function App() {
                     <div className="no-observations">
                       <CheckCheck size={22} />
                       <strong>No observations yet</strong>
-                      <p>Exercise events and communication issues appear here.</p>
+                      <p>Traffic events and communication issues appear here.</p>
                     </div>
                   )}
                 </div>
                 {ready && (
                   <ObservationEditor
-                    key={session.id}
+                    key={`observation-${session.id}`}
                     anchor={observationAnchor}
                     events={session.events}
                     act={act}
@@ -1323,8 +1455,8 @@ export default function App() {
               {replayIndex !== null
                 ? 'REPLAY'
                 : session.running
-                  ? 'EXERCISE RUNNING'
-                  : 'EXERCISE PAUSED'}
+                  ? 'SIMULATION RUNNING'
+                  : 'SIMULATION PAUSED'}
             </strong>
             <span className="status-divider" />
             <span>{active.length} aircraft</span>
@@ -1373,7 +1505,7 @@ export default function App() {
       )}
       {modal === 'restore' && pendingRestore && (
         <ModalShell
-          title="Restore this exercise?"
+          title="Restore this session?"
           eyebrow="REVIEW SESSION RECORD"
           onClose={() => setModal('sessions')}
         >
@@ -1381,7 +1513,7 @@ export default function App() {
             <span className="eyebrow">
               {SCENARIOS.find((s) => s.id === pendingRestore.session.scenarioId)?.code}
             </span>
-            <h3>{SCENARIOS.find((s) => s.id === pendingRestore.session.scenarioId)?.title}</h3>
+            <h3>{pendingRestore.session.exercise.title}</h3>
             <dl>
               <div>
                 <dt>Source</dt>
@@ -1404,22 +1536,22 @@ export default function App() {
             </dl>
           </div>
           <p className="modal-intro">
-            This opens a separate copy with the clock paused. The current exercise is checkpointed
+            This opens a separate copy with the clock paused. The current session is checkpointed
             first if browser storage is available. Existing checkpoints are preserved.
           </p>
           {pendingRestore.migrated && (
             <div className="migration-notice">
               <Info size={16} />
               <p>
-                This legacy record will use the current model with scripted pilots. Version 0.1
-                airborne landing states also adopt the moving-arrival model. Historical snapshots
-                remain as originally recorded.
+                This legacy record will use the current model. Existing pilot controls are retained
+                where supported. Version 0.1 airborne landing states also adopt the moving-arrival
+                model. Historical snapshots remain as originally recorded.
               </p>
             </div>
           )}
           {saveStatus.error && (
             <div className="library-error" role="alert">
-              Local storage is unavailable. Export the current exercise before replacing it if you
+              Local storage is unavailable. Export the current session before replacing it if you
               need a copy.
             </div>
           )}
@@ -1434,72 +1566,61 @@ export default function App() {
           </div>
         </ModalShell>
       )}
-      {modal === 'scenarios' && (
+      {modal === 'simulation' && (
         <ModalShell
-          title="Choose your exercise"
-          eyebrow="WMKK TRAINING LIBRARY"
-          onClose={() => {
-            setModal(null)
-            setConfirmScenario(null)
-          }}
-          wide
+          title="WMKK simulation"
+          eyebrow="CONTINUOUS AIRPORT OPERATIONS"
+          onClose={() => setModal(null)}
         >
-          <p className="modal-intro">
-            Focused exercises for developing the controller workflow. Each uses the same
-            illustrative airport dataset.
+          <p>
+            Continuous fictional arrivals and departures on the supported WMKK chart routes. No
+            lesson objectives, scoring or completion screen. Traffic uses four concurrent
+            stand/runway profiles; this is not live VATSIM traffic or a complete airport traffic
+            model.
           </p>
-          <div className="scenario-cards">
-            {SCENARIOS.map((s) => (
-              <button
-                key={s.id}
-                className={`scenario-card ${s.id === session.scenarioId ? 'current' : ''}`}
-                onClick={() => loadScenario(s.id)}
-              >
-                <div className={`scenario-art art-${s.id}`}>
-                  <div className="mini-runway" />
-                  <div className="mini-runway second" />
-                  <Plane size={22} />
-                  <span>{s.code}</span>
-                </div>
-                <div className="scenario-card-content">
-                  <span className="eyebrow">{s.category}</span>
-                  <h3>{s.title}</h3>
-                  <p>{s.description}</p>
-                  <div className="scenario-meta">
-                    <span>
-                      <Clock3 size={12} />
-                      {s.duration}
-                    </span>
-                    <span>
-                      <Plane size={12} />
-                      {s.traffic}
-                    </span>
-                  </div>
-                  <span className="scenario-load">
-                    {confirmScenario === s.id
-                      ? 'Confirm reset & load exercise'
-                      : s.id === session.scenarioId
-                        ? 'Restart this exercise'
-                        : 'Load exercise'}
-                    <ArrowRight size={15} />
-                  </span>
-                </div>
-              </button>
-            ))}
-          </div>
-          {confirmScenario && (
-            <div className="reset-notice">
-              <TriangleAlert size={16} />
-              <span>
-                Loading an exercise resets this session. Export the current history first if you
-                need to keep it.
-              </span>
-              <button className="text-button" onClick={exportSession}>
-                Export first
-                <Download size={13} />
-              </button>
-            </div>
-          )}
+          <label className="observation-priority">
+            Automatic traffic
+            <input
+              type="checkbox"
+              aria-label="Automatic traffic"
+              checked={session.simulation?.trafficEnabled ?? false}
+              disabled={!session.simulation}
+              onChange={(e) =>
+                update((s) => ({
+                  ...s,
+                  simulation: s.simulation
+                    ? { ...s.simulation, trafficEnabled: e.target.checked }
+                    : undefined,
+                }))
+              }
+            />
+          </label>
+          <p>
+            Completed traffic slots replenish after 90 seconds for departures and 120 seconds for
+            arrivals. Active aircraft remain under your control when automatic traffic is paused.
+          </p>
+          <button
+            className="primary-button"
+            onClick={async () => {
+              if (!(await saveNow())) {
+                setToast('Save or export the current session before replacing it.')
+                return
+              }
+              window.speechSynthesis?.cancel()
+              lastSpoken.current = 0
+              const next = createSimulation()
+              update(() => next)
+              setSelectedId(next.aircraft[0].id)
+              setFrequency(next.aircraft[0].frequency)
+              setReplayIndex(null)
+              setReplayPlaying(false)
+              setCommandError('')
+              setCommand('')
+              setModal(null)
+            }}
+          >
+            New simulation
+          </button>
         </ModalShell>
       )}
       {modal === 'reference' && (
@@ -1531,7 +1652,7 @@ export default function App() {
                 ['Acknowledge', 'standby'],
                 ['Correct readback', `negative, I say again runway ${selected.runway}`],
                 ['Transfer to ground', `contact Lumpur Ground ${RUNWAYS[selected.runway].ground}`],
-                ['Taxi to arrival stand', `taxi to stand ${selected.stand} via C`],
+                ['Taxi to arrival stand', `taxi to stand ${selected.stand} via ${ARRIVAL_ROUTE}`],
               ].map(([label, text]) => (
                 <button
                   key={label}
@@ -1553,7 +1674,7 @@ export default function App() {
                 <Target size={19} />
                 <h3>A complete departure</h3>
                 <ol>
-                  <li>Start the exercise and approve pushback on ground.</li>
+                  <li>Start the simulation and approve pushback on ground.</li>
                   <li>Wait for “ready to taxi”.</li>
                   <li>Taxi via the demonstration route.</li>
                   <li>At the holding point, transfer to tower.</li>
@@ -1570,7 +1691,7 @@ export default function App() {
               </div>
               <p className="muted-small">
                 For MAS1134: select 118.500, issue landing clearance, wait for runway vacation,
-                transfer to 121.650, then taxi to B10 via C.
+                transfer to 121.650, then taxi to B10 via C D2 G F4 T4 T2.
               </p>
             </div>
           </div>
@@ -1587,12 +1708,14 @@ export default function App() {
             <div>
               <Clock3 size={17} />
               <strong>{formatTime(session.time)}</strong>
-              <span>Exercise time</span>
+              <span>Simulation time</span>
             </div>
             <div>
               <CheckCheck size={17} />
               <strong>
-                {session.completed}/{session.aircraft.length}
+                {session.simulation
+                  ? session.completed
+                  : `${session.completed}/${session.aircraft.length}`}
               </strong>
               <span>Aircraft completed</span>
             </div>
@@ -1610,9 +1733,26 @@ export default function App() {
             </div>
           </div>
           <p className="debrief-note">
-            Development evidence only. Counts are not competency scores. Select an event to inspect
-            the airport snapshot recorded at that moment.
+            Session log. Select an event to inspect the airport snapshot recorded at that moment.
           </p>
+          <div className="builder-toolbar">
+            <button
+              className="secondary-button"
+              onClick={() =>
+                downloadArtifact(`${session.id}-report.html`, sessionReport(session), 'text/html')
+              }
+            >
+              Export printable report
+            </button>
+            <button
+              className="secondary-button"
+              onClick={() =>
+                downloadArtifact(`${session.id}-radio.csv`, radioCsv(session), 'text/csv')
+              }
+            >
+              Export radio CSV
+            </button>
+          </div>
           <div className="review-filters" role="group" aria-label="Filter review events">
             {(['all', 'radio', 'interventions', 'observations'] as const).map((filter) => (
               <button
@@ -1636,7 +1776,9 @@ export default function App() {
               <button
                 key={e.id}
                 className={`timeline-event ${e.severity}`}
-                onClick={() => inspectEvent(e.kind === 'note' ? e.relatedEventId! : e.id)}
+                onClick={() =>
+                  inspectEvent(['note', 'assessment'].includes(e.kind) ? e.relatedEventId! : e.id)
+                }
               >
                 <time>{formatTime(e.time)}</time>
                 <span className={`timeline-kind ${e.kind}`}>
@@ -1681,7 +1823,7 @@ export default function App() {
               Development prototype
             </h3>
             <p>
-              The exercise is automatically checkpointed in this browser and reopens paused after
+              The session is automatically checkpointed in this browser and reopens paused after
               refresh. Use saved sessions to import or restore a record. Export a JSON copy to keep
               it independently; no server storage is used.
             </p>
@@ -1690,7 +1832,7 @@ export default function App() {
               onClick={() => void openLibrary()}
             >
               <FolderOpen size={15} />
-              Open saved exercises
+              Open session archive
             </button>
             <div className="settings-row">
               <span>
@@ -1714,7 +1856,7 @@ export default function App() {
               </div>
               <div>
                 <dt>Validation</dt>
-                <dd className="amber-text">Illustrative · unverified</dd>
+                <dd className="amber-text">Chart-transcribed · unvalidated</dd>
               </div>
               <div>
                 <dt>Simulation</dt>
@@ -1722,10 +1864,77 @@ export default function App() {
               </div>
             </dl>
             <p>
-              {AIRPORT_DATA.note} No speech recognition, generative pilot AI, separation-minima
-              model, or professional assessment is implemented.
+              {AIRPORT_DATA.note} Browser speech recognition is optional and requires review before
+              transmission. No generative pilot AI, validated separation-minima model, or approved
+              professional assessment is implemented.
             </p>
           </div>
+          <div className="settings-section">
+            <h3>
+              <Mic size={17} />
+              Voice input and readback
+            </h3>
+            <p>
+              Click the microphone to dictate a draft, then check its callsign, runway, route, and
+              frequency before transmitting. Browser support varies. Your browser may send audio to
+              its speech service; the app retains text only and does not record audio. Permission,
+              network, or recognition failures leave typed transmissions available.
+            </p>
+            <label className="observation-priority">
+              Pilot voice
+              <select
+                aria-label="Pilot voice"
+                value={voiceURI}
+                onChange={(e) => {
+                  setVoiceURI(e.target.value)
+                  try {
+                    localStorage.setItem('vatsim-ai.readback-voice', e.target.value)
+                  } catch {
+                    /* Voice selection still applies for this tab. */
+                  }
+                }}
+              >
+                <option value="">Best available English voice</option>
+                {readbackVoices.map((v) => (
+                  <option key={v.voiceURI} value={v.voiceURI}>
+                    {v.name} · {v.lang}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p>
+              {readbackVoice
+                ? `Selected: ${readbackVoice.name}.`
+                : 'No English voices reported yet; using the browser default.'}{' '}
+              Natural voices depend on your browser and operating system. Some voices need a network
+              connection.
+            </p>
+            <button
+              className="secondary-button"
+              onClick={() =>
+                speakReadback(
+                  'Taxi via T2 T3 F1 G B9 A A11, hold short runway 32R, Malaysian six one two.',
+                  true,
+                )
+              }
+            >
+              Preview pilot voice
+            </button>
+            <label className="observation-priority">
+              Pilot readback speed
+              <select
+                aria-label="Pilot readback speed"
+                value={voiceRate}
+                onChange={(e) => setVoiceRate(Number(e.target.value))}
+              >
+                <option value={0.8}>0.8×</option>
+                <option value={0.95}>0.95×</option>
+                <option value={1}>1×</option>
+                <option value={1.2}>1.2×</option>
+              </select>
+            </label>
+          </div>
+          <DataReadiness exercise={session.exercise} />
           <div className="settings-section">
             <h3>
               <Keyboard size={17} />
@@ -1750,12 +1959,11 @@ export default function App() {
             <button
               className="secondary-button"
               onClick={() => {
-                setModal('scenarios')
-                setConfirmScenario(session.scenarioId)
+                setModal('simulation')
               }}
             >
               <RotateCcw size={15} />
-              Reset exercise
+              New simulation
             </button>
             <button className="primary-button" onClick={() => setModal(null)}>
               Back to workstation

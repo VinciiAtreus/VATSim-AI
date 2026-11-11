@@ -8,7 +8,7 @@ test('controller selects an aircraft, transmits, and inspects a historical snaps
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Kuala Lumpur International' })).toBeVisible()
-  await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
+  await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
   await page.getByRole('button', { name: 'Approve pushback' }).click()
   await expect(page.getByRole('textbox', { name: 'Controller transmission' })).toHaveValue(
     'MAS612, pushback approved',
@@ -28,7 +28,7 @@ test('controller selects an aircraft, transmits, and inspects a historical snaps
   await expect(page.getByText('SESSION REPLAY', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Transmit clearance' })).toBeDisabled()
   await page.getByRole('button', { name: 'Return to live' }).click()
-  await expect(page.getByRole('button', { name: 'Resume exercise' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Resume simulation' })).toBeEnabled()
   expect(errors).toEqual([])
 })
 
@@ -36,8 +36,8 @@ test('pseudo-pilot queue survives reload paused and executes once with operator 
   page,
 }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
-  await page.getByRole('button', { name: 'Instructor', exact: true }).click()
+  await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
+  await page.getByRole('button', { name: 'Operations', exact: true }).click()
   await page.getByRole('button', { name: 'Take over MAS612', exact: true }).click()
   await page
     .getByRole('textbox', { name: 'Controller transmission' })
@@ -52,12 +52,12 @@ test('pseudo-pilot queue survives reload paused and executes once with operator 
     'SAVED LOCALLY',
   )
   await page.reload()
-  await page.getByRole('button', { name: 'Instructor', exact: true }).click()
+  await page.getByRole('button', { name: 'Operations', exact: true }).click()
   await expect(page.getByLabel('Pending pilot instruction')).toContainText(
     'MAS612, pushback approved',
   )
   await expect(page.getByRole('button', { name: 'Execute & read back' })).toBeDisabled()
-  await page.getByRole('button', { name: 'Resume exercise' }).click()
+  await page.getByRole('button', { name: 'Resume simulation' }).click()
   await page.getByRole('button', { name: 'Execute & read back' }).click()
   await expect(page.getByRole('button', { name: 'Select MAS612' })).toContainText('PUSHBACK')
   await expect(page.getByRole('log')).toContainText('OPERATOR')
@@ -74,8 +74,8 @@ test('instructor declines an instruction and transmits a radio-only pilot call',
   page,
 }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
-  await page.getByRole('button', { name: 'Instructor', exact: true }).click()
+  await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
+  await page.getByRole('button', { name: 'Operations', exact: true }).click()
   await page.getByRole('button', { name: 'Take over MAS612', exact: true }).click()
   await page
     .getByRole('textbox', { name: 'Controller transmission' })
@@ -125,7 +125,7 @@ test('instructor notes link to inspected snapshots and persist in the debrief', 
 
 test('rejects a transmission on the wrong radio without moving the aircraft', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
+  await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
   await page.getByLabel('Transmit frequency').selectOption('118.800')
   await page
     .getByRole('textbox', { name: 'Controller transmission' })
@@ -139,13 +139,7 @@ test('scenario selection, instructor event, search, and export are functional', 
   page,
 }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: 'Choose exercise', exact: true }).click()
-  await page.getByRole('button', { name: /Readback discipline/ }).click()
-  await expect(page.getByText('Readback discipline', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Instructor', exact: true }).click()
-  await expect(page.getByRole('button', { name: /Incorrect runway readback/ })).toContainText(
-    'Armed',
-  )
+  await page.getByRole('button', { name: 'Operations', exact: true }).click()
   await page.getByRole('button', { name: /Runway obstruction/ }).click()
   await expect(page.getByText('RWY OCCUPIED', { exact: true })).toBeVisible()
   await page.getByRole('textbox', { name: 'Search flight strips' }).fill('AXM')
@@ -154,7 +148,7 @@ test('scenario selection, instructor event, search, and export are functional', 
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: 'Export session', exact: true }).click()
   const download = await downloadPromise
-  expect(download.suggestedFilename()).toMatch(/wmkk–03-session-\d+s.json/)
+  expect(download.suggestedFilename()).toMatch(/wmkk–01-session-\d+s.json/)
 })
 
 test('mobile layout has no horizontal page overflow and supports dialog keyboard escape', async ({
@@ -173,7 +167,7 @@ test('mobile layout has no horizontal page overflow and supports dialog keyboard
 
 test('automatically checkpoints a clearance and restores paused after reload', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
+  await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
   await page
     .getByRole('textbox', { name: 'Controller transmission' })
     .fill('MAS612, pushback approved')
@@ -184,11 +178,11 @@ test('automatically checkpoints a clearance and restores paused after reload', a
   )
   await page.reload()
   await expect(
-    page.getByText('Previous exercise restored paused. Resume when you are ready.'),
+    page.getByText('Previous session restored paused. Resume when you are ready.'),
   ).toBeVisible()
   await expect(page.getByRole('button', { name: 'Select MAS612' })).toContainText('PUSHBACK')
-  await expect(page.getByRole('button', { name: 'Resume exercise' })).toBeEnabled()
-  await expect(page.getByRole('button', { name: 'Pause exercise' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Resume simulation' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Pause simulation' })).toHaveCount(0)
   await expect(page.getByRole('log')).toContainText('Pushback approved, Malaysian six one two.')
 })
 
@@ -196,7 +190,7 @@ test('imports an exported record into a separate paused copy and preserves check
   page,
 }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
+  await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
   await page
     .getByRole('textbox', { name: 'Controller transmission' })
     .fill('MAS612, pushback approved')
@@ -207,17 +201,17 @@ test('imports an exported record into a separate paused copy and preserves check
   const chunks = []
   for await (const chunk of stream!) chunks.push(Buffer.from(chunk))
   const buffer = Buffer.concat(chunks)
-  expect(JSON.parse(buffer.toString()).schema).toBe('vatsim-ai.session.v3')
+  expect(JSON.parse(buffer.toString()).schema).toBe('vatsim-ai.session.v4')
   await page.getByRole('button', { name: 'Saved sessions', exact: true }).click()
   await page
     .getByLabel('Import session JSON', { exact: true })
     .setInputFiles({ name: 'departure.json', mimeType: 'application/json', buffer })
-  await expect(page.getByRole('dialog', { name: 'Restore this exercise?' })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: 'Restore this session?' })).toBeVisible()
   await page.getByRole('button', { name: 'Restore paused', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Select MAS612' })).toContainText('PUSHBACK')
-  await expect(page.getByRole('button', { name: 'Resume exercise' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Resume simulation' })).toBeEnabled()
   await page.getByRole('button', { name: 'Saved sessions', exact: true }).click()
-  await expect(page.getByText('2 saved exercises', { exact: true })).toBeVisible()
+  await expect(page.getByText('2 saved sessions', { exact: true })).toBeVisible()
 })
 
 test('rejects malformed imports and keeps the current exercise', async ({ page }) => {
@@ -229,7 +223,7 @@ test('rejects malformed imports and keeps the current exercise', async ({ page }
     buffer: Buffer.from('{invalid'),
   })
   await expect(page.getByRole('alert')).toContainText('not valid JSON')
-  await expect(page.getByRole('dialog', { name: 'Saved exercises' })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: 'Session archive' })).toBeVisible()
   await page.getByRole('button', { name: 'Close dialog' }).click()
   await expect(page.getByRole('button', { name: 'Select MAS612' })).toContainText('AT STAND')
 })
@@ -247,11 +241,11 @@ test('offers an explicit model migration for version 0.1 exports', async ({ page
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(legacy)),
   })
-  await expect(page.getByRole('dialog', { name: 'Restore this exercise?' })).toContainText(
-    'current model with scripted pilots',
+  await expect(page.getByRole('dialog', { name: 'Restore this session?' })).toContainText(
+    'current model. Existing pilot controls are retained',
   )
   await page.getByRole('button', { name: 'Restore paused', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Start exercise', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Start simulation', exact: true })).toBeEnabled()
 })
 
 test('storage failure is visible and leaves text training and export available', async ({
@@ -265,7 +259,7 @@ test('storage failure is visible and leaves text training and export available',
   await expect(page.getByRole('button', { name: 'Local save status' })).toContainText(
     'SAVE UNAVAILABLE',
   )
-  await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
+  await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
   await page
     .getByRole('textbox', { name: 'Controller transmission' })
     .fill('MAS612, pushback approved')
@@ -278,11 +272,11 @@ test('arrival progresses to a recorded automatic go-around when uncleared', asyn
   await page.clock.install()
   await page.goto('/')
   await page.getByRole('button', { name: 'Select MAS1134' }).click()
-  await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
+  await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
   await page.getByRole('button', { name: '4×', exact: true }).click()
   await page.clock.runFor(19_000)
   await expect(page.getByRole('button', { name: 'Select MAS1134' })).toContainText('GOING AROUND')
-  await page.getByRole('button', { name: /^Instructor/ }).click()
+  await page.getByRole('button', { name: /^Operations/ }).click()
   await expect(
     page
       .locator('.observation')
@@ -300,7 +294,7 @@ test('compact desktop keeps the transmission box above the status bar after reco
   )
   await page.reload()
   await expect(
-    page.getByText('Previous exercise restored paused. Resume when you are ready.'),
+    page.getByText('Previous session restored paused. Resume when you are ready.'),
   ).toBeVisible()
   const command = await page.locator('.command-form').boundingBox()
   const footer = await page.locator('.status-bar').boundingBox()
@@ -309,7 +303,7 @@ test('compact desktop keeps the transmission box above the status bar after reco
 
 test('oversized transmission is rejected and its checkpoint still recovers', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
+  await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
   await page
     .getByRole('textbox', { name: 'Controller transmission' })
     .fill(`MAS612, ${'x'.repeat(5000)}`)
@@ -320,7 +314,7 @@ test('oversized transmission is rejected and its checkpoint still recovers', asy
   )
   await page.reload()
   await expect(
-    page.getByText('Previous exercise restored paused. Resume when you are ready.'),
+    page.getByText('Previous session restored paused. Resume when you are ready.'),
   ).toBeVisible()
   await expect(page.getByRole('button', { name: 'Select MAS612' })).toContainText('AT STAND')
 })
@@ -363,14 +357,16 @@ test('browser history beyond the file-import limit can recover and restore indep
   }, envelope)
   await page.reload()
   await expect(
-    page.getByText('Previous exercise restored paused. Resume when you are ready.'),
+    page.getByText('Previous session restored paused. Resume when you are ready.'),
   ).toBeVisible()
-  await expect(page.getByRole('button', { name: /WMKK–02 Departure fundamentals/ })).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: /WMKK · CONTINUOUS Airport operations/ }),
+  ).toBeVisible()
   await page.getByRole('button', { name: 'Saved sessions', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText(`${long.events.length + 1} events`)
   await page.getByRole('button', { name: 'Restore Departure fundamentals', exact: true }).click()
   await page.getByRole('button', { name: 'Restore paused', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Start exercise', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Start simulation', exact: true })).toBeEnabled()
 })
 
 test('recovers a version 0.2 checkpoint with a migration notice and scripted defaults', async ({
@@ -420,10 +416,12 @@ test('recovers a version 0.2 checkpoint with a migration notice and scripted def
   }, legacy)
   await page.reload()
   await expect(
-    page.getByText(/Legacy checkpoint migrated to the current model with scripted pilots/),
+    page.getByText(/Legacy checkpoint migrated to the current model; restored paused/),
   ).toBeVisible()
-  await expect(page.getByRole('button', { name: /WMKK–02 Departure fundamentals/ })).toBeVisible()
-  await page.getByRole('button', { name: 'Instructor', exact: true }).click()
+  await expect(
+    page.getByRole('button', { name: /WMKK · CONTINUOUS Airport operations/ }),
+  ).toBeVisible()
+  await page.getByRole('button', { name: 'Operations', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Take over MAS612', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Start exercise', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Start simulation', exact: true })).toBeEnabled()
 })

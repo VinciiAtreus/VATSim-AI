@@ -1,16 +1,46 @@
-import { useState } from 'react'
-import { Crosshair, Layers3, Minus, Plus, Route, Wind } from 'lucide-react'
+import {
+  chart,
+  TERMINALS,
+  STANDS,
+  PUSHBACK,
+  NODES,
+  SURFACE_EDGES,
+  HOLD_NAMES,
+  CONTEXT_LINES,
+  PARKING_STANDS,
+  METRES_PER_UNIT,
+  MAP_ROTATION,
+} from '../sim/geometry'
+import { useEffect, useRef, useState } from 'react'
+import { Crosshair, Layers3, Minus, Plus, Route, Wind, Plane } from 'lucide-react'
 import { PHASE_LABELS, RUNWAYS } from '../sim/airport'
-import type { Aircraft, RunwayId } from '../sim/types'
+import type { Aircraft, RunwayId, Weather } from '../sim/types'
 
 type Props = {
+  weather: Weather
   aircraft: Aircraft[]
   selected: string
   onSelect: (id: string) => void
   blockedRunway: RunwayId | null
   replay: boolean
 }
-export default function AirportMap({ aircraft, selected, onSelect, blockedRunway, replay }: Props) {
+export default function AirportMap({
+  aircraft,
+  selected,
+  onSelect,
+  blockedRunway,
+  replay,
+  weather,
+}: Props) {
+  const svgRef = useRef<SVGSVGElement>(null)
+  const [canvasSize, setCanvasSize] = useState(440)
+  useEffect(() => {
+    const observer = new ResizeObserver(([entry]) =>
+      setCanvasSize(Math.min(entry.contentRect.width, entry.contentRect.height)),
+    )
+    if (svgRef.current) observer.observe(svgRef.current)
+    return () => observer.disconnect()
+  }, [])
   const [zoom, setZoom] = useState(1)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
   const [routes, setRoutes] = useState(true)
@@ -21,8 +51,58 @@ export default function AirportMap({ aircraft, selected, onSelect, blockedRunway
     selectedAircraft && selectedAircraft.routeIndex < selectedAircraft.route.length
       ? [selectedAircraft.position, ...selectedAircraft.route.slice(selectedAircraft.routeIndex)]
       : []
+  const angle = (MAP_ROTATION * Math.PI) / 180
+  const rotate = (p: { x: number; y: number }) => ({
+    x: 470 + (p.x - 470) * Math.cos(angle) - (p.y - 380) * Math.sin(angle),
+    y: 380 + (p.x - 470) * Math.sin(angle) + (p.y - 380) * Math.cos(angle),
+  })
+  const bounds = Object.values(RUNWAYS).flatMap((r) => [
+    rotate({ x: r.x, y: r.top }),
+    rotate({ x: r.x, y: r.bottom }),
+  ])
+  if (selectedAircraft?.phase === 'final') bounds.push(rotate(selectedAircraft.position))
+  const minY = Math.min(...bounds.map((p) => p.y)),
+    maxY = Math.max(...bounds.map((p) => p.y))
+  const minX = Math.min(...bounds.map((p) => p.x)),
+    maxX = Math.max(...bounds.map((p) => p.x))
+  const fitSize = Math.max(950, maxY - minY + 140, maxX - minX + 200)
+  const fitY = (minY + maxY) / 2,
+    fitX = (minX + maxX) / 2 + 40
+  const viewRef = useRef({ fitSize, fitX, fitY, zoom, offset, canvasSize })
+  viewRef.current = { fitSize, fitX, fitY, zoom, offset, canvasSize }
+  useEffect(() => {
+    const svg = svgRef.current
+    if (!svg) return
+    const wheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const v = viewRef.current,
+        rect = svg.getBoundingClientRect()
+      const next = Math.max(
+        0.65,
+        Math.min(20, v.zoom * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.035 : 0.0015))),
+      )
+      const size = Math.min(rect.width, rect.height)
+      const px = (e.clientX - rect.left - rect.width / 2) / size,
+        py = (e.clientY - rect.top - rect.height / 2) / size
+      const delta = v.fitSize / v.zoom - v.fitSize / next
+      setOffset({ x: v.offset.x + px * delta, y: v.offset.y + py * delta })
+      setZoom(next)
+    }
+    const surface = svg.parentElement!
+    surface.addEventListener('wheel', wheel, { passive: false })
+    return () => surface.removeEventListener('wheel', wheel)
+  }, [])
+  const unitsPerPixel = fitSize / zoom / Math.max(1, canvasSize)
+  const scaleTarget = 80 * unitsPerPixel * METRES_PER_UNIT
+  const magnitude = 10 ** Math.floor(Math.log10(scaleTarget))
+  const scaleMetres =
+    [1, 2, 5]
+      .map((n) => n * magnitude)
+      .filter((n) => n <= scaleTarget)
+      .at(-1) ?? magnitude
+  const scalePixels = scaleMetres / METRES_PER_UNIT / unitsPerPixel
   return (
-    <section className="map-panel" aria-label="WMKK schematic airport display">
+    <section className="map-panel" aria-label="WMKK chart-transcribed airport display">
       <div className="map-heading">
         <div className="map-heading-main">
           <span className={`live-dot ${replay ? 'amber' : ''}`} />
@@ -54,25 +134,35 @@ export default function AirportMap({ aircraft, selected, onSelect, blockedRunway
       <div className="map-canvas">
         <div className="map-weather">
           <Wind size={15} />
-          <span>320° / 05 KT</span>
+          <span>
+            {String(weather.windDirection).padStart(3, '0')}° /{' '}
+            {String(weather.windSpeed).padStart(2, '0')} KT
+          </span>
           <span className="weather-separator" />
-          <span>QNH 1012</span>
+          <span>
+            QNH {weather.qnh} · INFO {weather.information}
+          </span>
         </div>
         <svg
+          ref={svgRef}
           className={`airport-svg ${drag ? 'dragging' : ''}`}
-          viewBox={`${600 - 600 / zoom + offset.x} ${380 - 450 / zoom + offset.y} ${1200 / zoom} ${900 / zoom}`}
+          viewBox={`${fitX - fitSize / 2 / zoom + offset.x} ${fitY - fitSize / 2 / zoom + offset.y} ${fitSize / zoom} ${fitSize / zoom}`}
           role="img"
-          aria-label="Illustrative airport layout with three runway pairs. Use the flight strip list to select an aircraft."
+          aria-label="Chart-transcribed airport layout with three runway pairs. Use the flight strip list to select an aircraft."
+          onDragStart={(e) => e.preventDefault()}
           onPointerDown={(e) => {
             if ((e.target as Element).closest('[data-aircraft]')) return
             if (e.button === 0) {
+              e.preventDefault()
+              window.getSelection()?.removeAllRanges()
               e.currentTarget.setPointerCapture(e.pointerId)
               setDrag({ x: e.clientX, y: e.clientY, ox: offset.x, oy: offset.y })
             }
           }}
           onPointerMove={(e) => {
             if (drag) {
-              const scale = 1200 / zoom / e.currentTarget.getBoundingClientRect().width
+              const rect = e.currentTarget.getBoundingClientRect()
+              const scale = fitSize / zoom / Math.min(rect.width, rect.height)
               setOffset({
                 x: drag.ox - (e.clientX - drag.x) * scale,
                 y: drag.oy - (e.clientY - drag.y) * scale,
@@ -81,6 +171,7 @@ export default function AirportMap({ aircraft, selected, onSelect, blockedRunway
           }}
           onPointerUp={() => setDrag(null)}
           onPointerCancel={() => setDrag(null)}
+          onLostPointerCapture={() => setDrag(null)}
         >
           <defs>
             <pattern id="map-grid" width="55" height="55" patternUnits="userSpaceOnUse">
@@ -104,255 +195,205 @@ export default function AirportMap({ aircraft, selected, onSelect, blockedRunway
             </symbol>
           </defs>
           <rect x="-1500" y="-1500" width="4000" height="4000" fill="url(#map-grid)" />
-          <g transform="rotate(-26 600 380)">
-            <path
-              d="M145 55 1040 40 1040 715 700 730 150 680Z"
-              fill="#29453e"
-              fillOpacity=".28"
-              stroke="#638677"
-              strokeOpacity=".12"
-              strokeDasharray="7 8"
-            />
-            <path d="M135 20 1060 20 1060 710 700 750 135 710Z" fill="url(#terrain-grid)" />
-            <path
-              d="M170 730H1070M1050 20V735M160 30H1045"
-              fill="none"
-              stroke="#557064"
-              strokeWidth="7"
-              opacity=".25"
-            />
-            <path
-              d="M700 730V535H810V510M455 730V555H420V495"
-              fill="none"
-              stroke="#5d7368"
-              strokeWidth="7"
-              opacity=".4"
-            />
-            <path
-              d="M700 730V535H810V510M455 730V555H420V495"
-              fill="none"
-              stroke="#b5b7a0"
-              strokeWidth=".8"
-              strokeDasharray="5 6"
-              opacity=".3"
-            />
+          <g transform={`rotate(${MAP_ROTATION} 470 380)`}>
+            {CONTEXT_LINES.map((line, i) => (
+              <g key={`context-${i}`}>
+                <polyline
+                  points={line.points.map((p) => `${p.x},${p.y}`).join(' ')}
+                  fill="none"
+                  stroke="#45605a"
+                  strokeWidth="5"
+                />
+                <polyline
+                  points={line.points.map((p) => `${p.x},${p.y}`).join(' ')}
+                  fill="none"
+                  stroke="#baad67"
+                  strokeWidth=".55"
+                />
+                {labels && zoom >= 2 && (
+                  <text
+                    x={line.points[0].x + 4}
+                    y={line.points[0].y - 4}
+                    className="taxi-label"
+                    style={{ fontSize: 11 * unitsPerPixel }}
+                  >
+                    {line.name}
+                  </text>
+                )}
+              </g>
+            ))}
+            {SURFACE_EDGES.map(([from, to]) => (
+              <g key={`${from}-${to}`}>
+                <line
+                  x1={NODES[from].x}
+                  y1={NODES[from].y}
+                  x2={NODES[to].x}
+                  y2={NODES[to].y}
+                  stroke="#45605a"
+                  strokeWidth="5"
+                />
+                <line
+                  x1={NODES[from].x}
+                  y1={NODES[from].y}
+                  x2={NODES[to].x}
+                  y2={NODES[to].y}
+                  stroke="#bcad63"
+                  strokeWidth=".7"
+                />
+              </g>
+            ))}
+            {TERMINALS.map((t) => {
+              const points = t.points.map(([x, y]) => chart(x, y))
+              const x = points.reduce((sum, p) => sum + p.x, 0) / points.length
+              const y = points.reduce((sum, p) => sum + p.y, 0) / points.length
+              return (
+                <g key={t.name}>
+                  <polygon
+                    points={points.map((p) => `${p.x},${p.y}`).join(' ')}
+                    fill="#708779"
+                    stroke="#94a89a"
+                    strokeWidth=".7"
+                  />
+                  {labels && (
+                    <text
+                      transform={`rotate(${-MAP_ROTATION} ${x} ${y})`}
+                      x={x}
+                      y={y - 15}
+                      textAnchor="middle"
+                      className="terminal-label"
+                      style={{ fontSize: 11 * unitsPerPixel }}
+                    >
+                      {t.name}
+                    </text>
+                  )}
+                </g>
+              )
+            })}
+            {labels &&
+              zoom >= 1.5 &&
+              PARKING_STANDS.map(({ name, position, apron }) => (
+                <g key={name} data-gate={name}>
+                  <title>Stand {name}</title>
+                  <line
+                    x1={position.x}
+                    y1={position.y}
+                    x2={apron.x}
+                    y2={apron.y}
+                    stroke="#d5c375"
+                    strokeWidth=".55"
+                  />
+                  <text
+                    transform={`translate(${position.x} ${position.y}) rotate(${-MAP_ROTATION})`}
+                    y={-3 * unitsPerPixel}
+                    textAnchor="middle"
+                    className="gate-map-label"
+                    style={{ fontSize: 11 * unitsPerPixel, strokeWidth: 3 * unitsPerPixel }}
+                  >
+                    {name}
+                  </text>
+                </g>
+              ))}
+            {Object.entries(STANDS).map(([name, p]) => (
+              <g key={name}>
+                <line
+                  x1={p.x}
+                  y1={p.y}
+                  x2={PUSHBACK[name as keyof typeof PUSHBACK].x}
+                  y2={PUSHBACK[name as keyof typeof PUSHBACK].y}
+                  stroke="#e3cf7d"
+                  strokeWidth="1"
+                />
+                {labels && (
+                  <text
+                    data-gate={name}
+                    transform={`translate(${p.x} ${p.y}) rotate(${-MAP_ROTATION})`}
+                    y={-8 * unitsPerPixel}
+                    textAnchor="middle"
+                    className="gate-map-label"
+                    style={{ fontSize: 12 * unitsPerPixel, strokeWidth: 3 * unitsPerPixel }}
+                  >
+                    {name}
+                  </text>
+                )}
+              </g>
+            ))}
             {Object.entries(RUNWAYS).map(([id, r]) => (
               <g key={id}>
                 <rect
-                  x={r.x - 25}
-                  y={r.top - 22}
-                  width="50"
-                  height={r.bottom - r.top + 44}
-                  rx="1"
-                  fill="#2c3d3e"
-                  opacity=".7"
-                />
-                <rect x={r.x - 15} y={r.top} width="30" height={r.bottom - r.top} fill="#81928f" />
-                <rect
-                  x={r.x - 13}
-                  y={r.top + 2}
-                  width="26"
-                  height={r.bottom - r.top - 4}
+                  x={r.x - 3}
+                  y={r.top}
+                  width="6"
+                  height={r.bottom - r.top}
                   fill="#344747"
+                  stroke="#b0beb5"
+                  strokeWidth=".8"
                 />
                 <line
                   x1={r.x}
-                  y1={r.top + 70}
+                  y1={r.top + 12}
                   x2={r.x}
-                  y2={r.bottom - 70}
+                  y2={r.bottom - 12}
                   stroke="#c6d4cc"
-                  strokeWidth="1.3"
-                  strokeDasharray="13 15"
-                  opacity=".65"
+                  strokeWidth=".7"
+                  strokeDasharray="5 6"
                 />
-                {[r.top + 8, r.bottom - 20].map((y) => (
-                  <g key={y}>
-                    {[-10, -6, -2, 2, 6, 10].map((x) => (
-                      <line
-                        key={x}
-                        x1={r.x + x}
-                        x2={r.x + x}
-                        y1={y}
-                        y2={y + 12}
-                        stroke="#d5e0d8"
-                        strokeWidth="2"
-                      />
-                    ))}
-                  </g>
-                ))}
-                <text x={r.x} y={r.top + 48} textAnchor="middle" className="runway-number">
+                <text
+                  x={r.x + 7}
+                  y={r.top + 8}
+                  className="runway-number"
+                  style={{ fontSize: 14 * unitsPerPixel }}
+                >
                   {r.opposite}
                 </text>
                 <text
-                  x={r.x}
-                  y={r.bottom - 38}
-                  textAnchor="middle"
+                  x={r.x + 7}
+                  y={r.bottom}
                   className="runway-number"
-                  transform={`rotate(180 ${r.x} ${r.bottom - 44})`}
+                  style={{ fontSize: 14 * unitsPerPixel }}
                 >
                   {id}
                 </text>
-                <path
-                  d={`M${r.hold.x} ${r.top + 32}V${r.bottom - 15}`}
+                <line
+                  x1={r.hold.x}
+                  y1={r.hold.y}
+                  x2={r.entry.x}
+                  y2={r.entry.y}
                   stroke="#45605a"
-                  strokeWidth="14"
-                  fill="none"
+                  strokeWidth="5"
                 />
-                <path
-                  d={`M${r.hold.x} ${r.top + 32}V${r.bottom - 15}`}
+                <line
+                  x1={r.hold.x}
+                  y1={r.hold.y}
+                  x2={r.entry.x}
+                  y2={r.entry.y}
                   stroke="#bcad63"
-                  strokeWidth="1"
-                  fill="none"
-                  opacity=".7"
-                />
-                {[r.top + 62, r.top + 165, r.top + 295, r.bottom - 45].map((y, i) => (
-                  <g key={y}>
-                    <path
-                      d={`M${r.x} ${y - 20}L${r.hold.x} ${y}`}
-                      stroke="#45605a"
-                      strokeWidth="11"
-                      fill="none"
-                    />
-                    <path
-                      d={`M${r.x} ${y - 20}L${r.hold.x} ${y}`}
-                      stroke="#bcad63"
-                      strokeWidth=".9"
-                      fill="none"
-                      opacity=".6"
-                    />
-                    {labels && (
-                      <text
-                        x={r.hold.x + (r.hold.x > r.x ? 12 : -24)}
-                        y={y + 3}
-                        className="taxi-label"
-                      >
-                        {r.route}
-                        {i + 1}
-                      </text>
-                    )}
-                  </g>
-                ))}
-                <line
-                  x1={r.hold.x - 6}
-                  x2={r.hold.x + 6}
-                  y1={r.hold.y - 2}
-                  y2={r.hold.y - 2}
-                  stroke="#f0cf77"
-                  strokeWidth="2.5"
+                  strokeWidth=".7"
                 />
                 <line
-                  x1={r.hold.x - 6}
-                  x2={r.hold.x + 6}
-                  y1={r.hold.y + 2}
-                  y2={r.hold.y + 2}
+                  x1={r.hold.x}
+                  y1={r.hold.y - 4}
+                  x2={r.hold.x}
+                  y2={r.hold.y + 4}
                   stroke="#f0cf77"
-                  strokeWidth="1"
-                  strokeDasharray="2 2"
+                  strokeWidth="1.6"
                 />
                 {labels && (
-                  <g transform={`translate(${r.hold.x + 12} ${r.top + 233}) rotate(26)`}>
-                    <rect x="-8" y="-9" width="19" height="18" rx="3" fill="#b8a462" />
-                    <text
-                      x="1"
-                      y="4"
-                      textAnchor="middle"
-                      fill="#1d302e"
-                      fontSize="11"
-                      fontFamily="monospace"
-                      fontWeight="700"
-                    >
-                      {r.route}
-                    </text>
-                  </g>
-                )}
-              </g>
-            ))}
-            <path
-              d="M635 245H870M635 340H870M635 440H870M325 380H460M325 440H460M325 525H635"
-              stroke="#45605a"
-              strokeWidth="13"
-              fill="none"
-            />
-            <path
-              d="M635 245H870M635 340H870M635 440H870M325 380H460M325 440H460M325 525H635"
-              stroke="#baad67"
-              strokeWidth=".8"
-              fill="none"
-              opacity=".6"
-            />
-            <g className="terminal">
-              <path d="M690 285H810V470H690Z" fill="#3c554e" stroke="#648074" strokeWidth="1" />
-              <path d="M725 290V465M775 290V465" stroke="#92a28b" strokeWidth="1" opacity=".3" />
-              <path
-                d="M730 270V155H790V270M710 195H810M710 235H810"
-                stroke="#758d7e"
-                strokeWidth="10"
-                fill="none"
-              />
-              <rect x="708" y="335" width="84" height="55" fill="#708779" rx="3" />
-              <rect x="708" y="400" width="84" height="38" fill="#566f62" rx="3" />
-              <path d="M345 330H465V490H345Z" fill="#3c554e" stroke="#648074" />
-              <path d="M354 380H455M354 432H455" stroke="#728a78" strokeWidth="12" />
-              <rect x="365" y="356" width="76" height="112" fill="#677e6c" rx="3" />
-              {labels && (
-                <>
                   <text
-                    transform="rotate(26 750 365)"
-                    x="750"
-                    y="365"
-                    className="terminal-label"
-                    textAnchor="middle"
+                    x={r.hold.x + 4}
+                    y={r.hold.y - 6}
+                    className="taxi-label"
+                    style={{ fontSize: 11 * unitsPerPixel }}
                   >
-                    TERMINAL 1
-                  </text>
-                  <text
-                    transform="rotate(26 403 409)"
-                    x="403"
-                    y="409"
-                    className="terminal-label"
-                    textAnchor="middle"
-                  >
-                    TERMINAL 2
-                  </text>
-                  <text
-                    transform="rotate(26 760 215)"
-                    x="760"
-                    y="215"
-                    className="area-label"
-                    textAnchor="middle"
-                  >
-                    SATELLITE
-                  </text>
-                </>
-              )}
-            </g>
-            {[
-              { x: 770, y: 340, label: 'B6' },
-              { x: 770, y: 390, label: 'B8' },
-              { x: 770, y: 440, label: 'B10' },
-              { x: 400, y: 440, label: 'Q4' },
-            ].map((p) => (
-              <g key={p.label}>
-                <path d={`M${p.x} ${p.y}h60`} stroke="#d5c375" strokeWidth=".75" opacity=".45" />
-                {labels && (
-                  <text x={p.x + 37} y={p.y - 7} className="stand-label">
-                    {p.label}
+                    {HOLD_NAMES[id as RunwayId]} HOLD
                   </text>
                 )}
               </g>
             ))}
-            <g transform="translate(830 510) rotate(26)">
-              <circle r="4" fill="#a3c2b5" />
-              <circle r="11" fill="none" stroke="#a3c2b5" strokeOpacity=".4" />
-              {labels && (
-                <text x="16" y="4" className="area-label">
-                  TOWER EAST
-                </text>
-              )}
-            </g>
             {blockedRunway && (
-              <g transform={`translate(${RUNWAYS[blockedRunway].x} 310) rotate(26)`}>
-                <circle r="19" stroke="#efad75" fill="#573e2b" strokeDasharray="3 3" />
+              <g
+                transform={`translate(${RUNWAYS[blockedRunway].x} ${(RUNWAYS[blockedRunway].top + RUNWAYS[blockedRunway].bottom) / 2}) rotate(${-MAP_ROTATION})`}
+              >
+                <circle r="13" stroke="#efad75" fill="#573e2b" strokeDasharray="3 3" />
                 <path d="m-7-7 14 14m0-14L-7 7" stroke="#efad75" strokeWidth="2" />
                 <text x="29" y="4" fill="#efad75" className="aircraft-map-label">
                   RWY OCCUPIED
@@ -372,7 +413,7 @@ export default function AirportMap({ aircraft, selected, onSelect, blockedRunway
             )}
             {routes && route.length > 1 && (
               <g
-                transform={`translate(${route[route.length - 1].x} ${route[route.length - 1].y}) rotate(26)`}
+                transform={`translate(${route[route.length - 1].x} ${route[route.length - 1].y}) rotate(${-MAP_ROTATION})`}
               >
                 <circle r="7" stroke="#c5e78d" strokeWidth="2" fill="#203b32" />
                 <text x="13" y="4" className="aircraft-map-label" fill="#c5e78d">
@@ -381,7 +422,8 @@ export default function AirportMap({ aircraft, selected, onSelect, blockedRunway
               </g>
             )}
             {aircraft
-              .filter((a) => a.phase !== 'complete')
+              .filter((a) => !['complete', 'scheduled'].includes(a.phase))
+              .sort((a, b) => Number(a.id === selected) - Number(b.id === selected))
               .map((a) => (
                 <g
                   key={a.id}
@@ -391,62 +433,71 @@ export default function AirportMap({ aircraft, selected, onSelect, blockedRunway
                   className="aircraft-marker"
                   aria-hidden="true"
                 >
-                  <circle r="27" fill="transparent" />
-                  {a.id === selected && (
-                    <>
-                      <circle r="23" fill="#b6e76a" opacity=".08" />
-                      <circle
-                        r="19"
-                        stroke="#c5e78d"
-                        strokeWidth="1"
-                        fill="none"
-                        strokeDasharray="3 4"
-                      />
-                    </>
-                  )}
-                  <use
-                    href="#aircraft-symbol"
-                    x="-10"
-                    y="-14"
-                    width="20"
-                    height="28"
-                    fill={
-                      a.id === selected
-                        ? '#d7f5a9'
-                        : a.operation === 'arrival'
-                          ? '#93cfe2'
-                          : '#b4c8c0'
-                    }
-                    transform={`rotate(${a.heading})`}
-                  />
-                  <g transform="rotate(26)">
-                    <rect
-                      x="20"
-                      y="-18"
-                      width="126"
-                      height="46"
-                      rx="3"
-                      fill="#122823"
-                      fillOpacity=".85"
-                    />
-                    <text
-                      x="26"
-                      y="-3"
-                      className="aircraft-map-label"
+                  <g transform={`scale(${unitsPerPixel})`}>
+                    <circle r="18" fill="transparent" />
+                    {a.id === selected && (
+                      <>
+                        <circle r="15" fill="#b6e76a" opacity=".08" />
+                        <circle
+                          r="13"
+                          stroke="#c5e78d"
+                          strokeWidth="1"
+                          fill="none"
+                          strokeDasharray="3 4"
+                        />
+                      </>
+                    )}
+                    <use
+                      href="#aircraft-symbol"
+                      x="-10"
+                      y="-14"
+                      width="20"
+                      height="28"
                       fill={
                         a.id === selected
                           ? '#d7f5a9'
                           : a.operation === 'arrival'
                             ? '#93cfe2'
-                            : '#c4d7ce'
+                            : '#b4c8c0'
                       }
+                      transform={`rotate(${a.heading})`}
+                    />
+                    <g
+                      transform={`rotate(${-MAP_ROTATION}) translate(0 ${a.stand === 'B8' ? 36 : 0})`}
                     >
-                      {a.id}
-                    </text>
-                    <text x="26" y="15" className="aircraft-map-detail">
-                      {a.type} ·{' '}
-                      {a.speed ? `${a.speed} KT` : a.phase === 'final' ? 'FINAL' : a.stand}
-                    </text>
+                      <rect
+                        x="20"
+                        y="-14"
+                        width="100"
+                        height="32"
+                        rx="3"
+                        fill="#122823"
+                        fillOpacity=".85"
+                      />
+                      <text
+                        x="26"
+                        y="-3"
+                        className="aircraft-map-label"
+                        style={{ fontSize: 11 }}
+                        fill={
+                          a.id === selected
+                            ? '#d7f5a9'
+                            : a.operation === 'arrival'
+                              ? '#93cfe2'
+                              : '#c4d7ce'
+                        }
+                      >
+                        {a.id}
+                      </text>
+                      <text x="26" y="10" className="aircraft-map-detail" style={{ fontSize: 9 }}>
+                        {a.type} ·{' '}
+                        {a.speed
+                          ? `${Math.round(a.speed)} KT`
+                          : a.phase === 'final'
+                            ? 'FINAL'
+                            : a.stand}
+                      </text>
+                    </g>
                   </g>
                 </g>
               ))}
@@ -460,11 +511,30 @@ export default function AirportMap({ aircraft, selected, onSelect, blockedRunway
           </svg>
         </div>
         <div className="map-zoom">
-          <button onClick={() => setZoom(Math.min(2.5, zoom + 0.25))} aria-label="Zoom in">
+          <button
+            aria-label="Focus selected aircraft"
+            title="Focus selected aircraft and nearby gates"
+            disabled={!selectedAircraft}
+            onClick={() => {
+              if (!selectedAircraft) return
+              const p = rotate(selectedAircraft.position)
+              setZoom(12)
+              setOffset({ x: p.x - fitX, y: p.y - fitY })
+            }}
+          >
+            <Plane size={16} />
+          </button>
+          <button
+            onClick={() => setZoom(Math.min(20, Math.round(zoom * 1.4 * 100) / 100))}
+            aria-label="Zoom in"
+          >
             <Plus size={16} />
           </button>
           <span>{zoom.toFixed(2)}×</span>
-          <button onClick={() => setZoom(Math.max(0.65, zoom - 0.25))} aria-label="Zoom out">
+          <button
+            onClick={() => setZoom(Math.max(0.65, Math.round((zoom / 1.4) * 100) / 100))}
+            aria-label="Zoom out"
+          >
             <Minus size={16} />
           </button>
           <button
@@ -478,8 +548,10 @@ export default function AirportMap({ aircraft, selected, onSelect, blockedRunway
           </button>
         </div>
         <div className="map-scale">
-          <span />
-          <small>SCHEMATIC · NOT TO SCALE</small>
+          <span style={{ width: scalePixels, display: 'block' }} />
+          <small>
+            {scaleMetres >= 1000 ? `${scaleMetres / 1000} km` : `${scaleMetres} m`} · approx.
+          </small>
         </div>
         {selectedAircraft && (
           <div className="selected-map-card">
@@ -500,7 +572,7 @@ export default function AirportMap({ aircraft, selected, onSelect, blockedRunway
           Selected
         </div>
         <span>
-          ILLUSTRATIVE DATASET <span className="map-version">v0.1</span>
+          CAAM CHART TRACE · UNVALIDATED <span className="map-version">v0.2</span>
         </span>
       </div>
     </section>

@@ -1,15 +1,29 @@
+import { initialAircraft } from './airport'
+import { spokenCallsign } from './callsigns'
+import { movementStep } from './motion'
+import { PUSHBACK, STANDS, departurePath, ARRIVAL_PATH, ARRIVAL_ROUTE, ROLLOUT } from './geometry'
 import {
   AIRPORT_DATA,
   ARRIVAL_MODEL,
   arrivalDecisionSeconds,
-  initialAircraft,
   pilotRequest,
   RUNWAYS,
-  SCENARIOS,
 } from './airport'
+import { builtinExercise, decodeExercise, decodeWeather, exerciseAircraft } from './exercises'
 import { parseTransmission } from './parser'
-import { ENGINE_VERSION } from './version'
-import type { Aircraft, Command, Frequency, Point, RunwayId, Session, SimEvent } from './types'
+import { BUILD_COMMIT, ENGINE_VERSION } from './version'
+import type {
+  Aircraft,
+  Assessment,
+  Command,
+  ExerciseDefinition,
+  Frequency,
+  Point,
+  RunwayId,
+  Session,
+  SimEvent,
+  Weather,
+} from './types'
 
 export function copyAircraft(aircraft: Aircraft[]): Aircraft[] {
   return aircraft.map((a) => ({
@@ -38,35 +52,116 @@ export function record(
     ...options,
     snapshot: copyAircraft(session.aircraft),
     blockedRunway: session.blockedRunway,
+    weather: { ...session.weather },
+    coordination: session.coordination.map((c) => ({ ...c })),
   }
   return { ...session, nextEventId: session.nextEventId + 1, events: [...session.events, event] }
 }
-export function createSession(scenarioId = 'morning'): Session {
-  const validId = SCENARIOS.some((s) => s.id === scenarioId) ? scenarioId : 'morning'
+export function createSession(scenarioId = 'morning', definition?: ExerciseDefinition): Session {
+  const exercise = decodeExercise(definition ?? builtinExercise(scenarioId))
+  const validId = exercise.id
   let s: Session = {
-    version: 3,
+    version: 4,
     id: crypto.randomUUID(),
     scenarioId: validId,
     time: 0,
     running: false,
     speed: 1,
-    aircraft: initialAircraft(validId),
+    aircraft: exerciseAircraft(exercise),
     events: [],
     nextEventId: 1,
     guidance: true,
-    injectReadback: validId === 'readback',
+    injectReadback: exercise.baseScenario === 'readback',
     blockedRunway: null,
     completed: 0,
     attempted: 0,
     accepted: 0,
+    exercise,
+    weather: { ...exercise.weather },
+    firedTriggers: [],
+    coordination: [],
+    assessments: [],
   }
   s = record(
     s,
     'system',
-    'Exercise loaded. Illustrative WMKK dataset; procedural validation pending.',
+    'Exercise loaded. Chart-transcribed WMKK dataset; procedural validation pending.',
   )
-  for (const a of s.aircraft)
-    s = record(s, 'pilot', pilotRequest(a), { aircraftId: a.id, frequency: a.frequency })
+  for (const a of s.aircraft.filter((a) => a.phase !== 'scheduled'))
+    s = record(s, 'pilot', pilotRequest(a, s.weather.information), {
+      aircraftId: a.id,
+      frequency: a.frequency,
+    })
+  return s
+}
+
+export function enableContinuous(s: Session): Session {
+  return {
+    ...s,
+    exercise: {
+      ...s.exercise,
+      title: 'WMKK continuous operations',
+      objective: 'Continuous WMKK arrivals and departures.',
+      triggers: [],
+    },
+    firedTriggers: [],
+    injectReadback: false,
+    simulation: {
+      sequence: 700,
+      trafficEnabled: true,
+      registry: s.exercise.traffic.map((t) => ({
+        callsign: t.callsign,
+        profileId: t.profileId,
+        releaseAt: t.releaseAt,
+      })),
+      nextRelease: {},
+    },
+  }
+}
+export function createSimulation(): Session {
+  return enableContinuous(createSession('morning'))
+}
+function replenishTraffic(s: Session): Session {
+  if (!s.simulation) return s
+  const sim = {
+    ...s.simulation,
+    registry: [...s.simulation.registry],
+    nextRelease: { ...s.simulation.nextRelease },
+  }
+  s = { ...s, simulation: sim }
+  const profiles = initialAircraft('morning')
+  for (let i = 0; i < s.aircraft.length; i++) {
+    const old = s.aircraft[i]
+    if (old.phase !== 'complete') continue
+    const profileId = sim.registry.find((t) => t.callsign === old.id)!.profileId
+    if (sim.nextRelease[profileId] === undefined)
+      sim.nextRelease[profileId] = s.time + (old.operation === 'arrival' ? 120 : 90)
+    if (!sim.trafficEnabled || s.time < sim.nextRelease[profileId]) continue
+    const profile = profiles.find((p) => p.id === profileId)!
+    const prefix =
+      profileId === 'MAS1134' && sim.sequence % 2 === 0 ? 'SIA' : profile.id.slice(0, 3)
+    let id = ''
+    do {
+      sim.sequence = (sim.sequence + 1) % 10000
+      id = `${prefix}${sim.sequence}`
+    } while (sim.registry.some((t) => t.callsign === id))
+    const a = {
+      ...profile,
+      id,
+      spoken: spokenCallsign(id)!,
+      position: { ...profile.position },
+      activationTime: s.time,
+      requestAt: s.time,
+    }
+    s.aircraft[i] = a
+    sim.registry.push({ callsign: id, profileId, releaseAt: s.time })
+    delete sim.nextRelease[profileId]
+    s = record(s, 'system', `${id}: new ${a.operation} traffic released.`, { aircraftId: id })
+    s = record(s, 'pilot', pilotRequest(a, s.weather.information), {
+      aircraftId: id,
+      frequency: a.frequency,
+    })
+  }
   return s
 }
 
@@ -83,6 +178,7 @@ function occupied(s: Session, runway: RunwayId, ownId: string) {
 }
 
 function validate(s: Session, a: Aircraft, c: Command, frequency: Frequency): string | null {
+  if (a.phase === 'scheduled') return 'This aircraft has not entered the simulation yet.'
   if (a.phase === 'complete') return 'This aircraft has completed its exercise.'
   if (frequency !== a.frequency)
     return `No response: ${a.id} is on ${a.frequency}. Select the correct transmit frequency.`
@@ -99,6 +195,7 @@ function validate(s: Session, a: Aircraft, c: Command, frequency: Frequency): st
     case 'taxi':
       if (!['ready', 'stopped', 'taxiing'].includes(a.phase) || a.operation !== 'departure')
         return 'Aircraft must be ready to taxi. Approve pushback first if it is at stand.'
+      if (!r.route) return 'Departure routing for this runway is not supported by this dataset.'
       if (c.via !== r.route)
         return `Demonstration route to runway ${a.runway} is via ${r.route}. Other routes have not been modelled.`
       return null
@@ -115,25 +212,36 @@ function validate(s: Session, a: Aircraft, c: Command, frequency: Frequency): st
       if (a.operation === 'arrival' && a.phase !== 'vacated')
         return 'Transfer this arrival to ground after it has vacated the runway.'
       if (a.frequency === c.frequency) return 'The aircraft is already on that frequency.'
+      if (
+        s.exercise.requireCoordination &&
+        !s.coordination.some(
+          (item) =>
+            item.aircraftId === a.id &&
+            item.from === a.frequency &&
+            item.to === c.frequency &&
+            item.status === 'approved',
+        )
+      )
+        return 'Exercise coordination required: obtain adjacent-station acceptance before issuing the transfer.'
       return null
     }
     case 'lineup':
       if (a.phase !== 'holding' || a.frequency !== r.frequency)
         return 'Line-up requires the aircraft holding short on the correct tower frequency.'
       return occupied(s, a.runway, a.id) && s.guidance
-        ? 'Training guard: runway occupied. Hold the aircraft or remove the obstruction in Instructor controls.'
+        ? 'Runway safety guard: runway occupied. Hold the aircraft or remove the obstruction in Operations controls.'
         : null
     case 'takeoff':
       if (a.phase !== 'lined-up' || a.frequency !== r.frequency)
         return 'Aircraft must be lined up on the correct tower frequency before departure.'
       return occupied(s, a.runway, a.id) && s.guidance
-        ? 'Training guard: runway occupied. Takeoff clearance has not been applied.'
+        ? 'Runway safety guard: runway occupied. Takeoff clearance has not been applied.'
         : null
     case 'land':
       if (a.phase !== 'final' || a.frequency !== r.frequency)
         return 'Landing clearance requires an arrival on final on the correct tower frequency.'
       return occupied(s, a.runway, a.id) && s.guidance
-        ? 'Training guard: runway occupied. Landing clearance has not been applied.'
+        ? 'Runway safety guard: runway occupied. Landing clearance has not been applied.'
         : null
     case 'goaround':
       return a.phase !== 'final' ? 'Go-around is available for an arrival on final.' : null
@@ -141,8 +249,8 @@ function validate(s: Session, a: Aircraft, c: Command, frequency: Frequency): st
       return a.phase !== 'vacated' ||
         a.frequency !== r.ground ||
         c.stand !== a.stand ||
-        c.via !== 'C'
-        ? `Taxi to stand requires runway vacated, ground frequency ${r.ground}, and the demonstration route to ${a.stand} via C.`
+        c.via !== ARRIVAL_ROUTE
+        ? `Taxi to stand requires runway vacated, ground frequency ${r.ground}, and the demonstration route to ${a.stand} via ${ARRIVAL_ROUTE}.`
         : null
     case 'correct':
       return !a.discrepancy ? 'There is no outstanding readback discrepancy to correct.' : null
@@ -206,13 +314,12 @@ function applyCommand(
   switch (c.type) {
     case 'pushback':
       a.phase = 'pushback'
-      setRoute(a, [{ x: a.position.x - 45, y: a.position.y }])
+      setRoute(a, [{ ...PUSHBACK[a.stand as keyof typeof PUSHBACK] }])
       a.clearance = 'Pushback approved'
       readback = `Pushback approved, ${a.spoken}.`
       break
     case 'taxi': {
-      const taxiX = r.hold.x
-      setRoute(a, [{ x: taxiX, y: a.position.y }, { ...r.hold }])
+      setRoute(a, departurePath(a.stand, a.runway, a.position))
       a.clearance = `Taxi via ${c.via} · hold short ${a.runway}`
       if (s.injectReadback && a.pilotMode === 'scripted') {
         const wrong: RunwayId = a.runway === '32R' ? '32L' : '32R'
@@ -253,7 +360,7 @@ function applyCommand(
       a.clearance = `Cleared for takeoff · runway ${a.runway}`
       setRoute(a, [
         { x: r.x, y: r.top },
-        { x: r.x, y: -110 },
+        { x: r.x, y: r.top - 200 },
       ])
       readback = `Runway ${a.runway}, cleared for takeoff, ${a.spoken}.`
       break
@@ -266,17 +373,14 @@ function applyCommand(
       a.phase = 'going-around'
       a.landingCleared = false
       a.clearance = 'Go around'
-      setRoute(a, [{ x: r.x, y: -110 }])
+      setRoute(a, [{ x: r.x, y: r.top - 200 }])
       readback = `Going around, ${a.spoken}.`
       break
     case 'gate':
       a.phase = 'taxiing'
-      a.clearance = `Taxi to stand ${a.stand} via C`
-      setRoute(a, [
-        { x: 640, y: 440 },
-        { x: 770, y: 440 },
-      ])
-      readback = `Taxi to stand ${a.stand} via C, ${a.spoken}.`
+      a.clearance = `Taxi to stand ${a.stand} via ${ARRIVAL_ROUTE}`
+      setRoute(a, [...ARRIVAL_PATH, STANDS.B10])
+      readback = `Taxi to stand ${a.stand} via ${ARRIVAL_ROUTE}, ${a.spoken}.`
       break
     case 'standby':
       a.clearance = 'Standby'
@@ -339,7 +443,7 @@ export function setPilotMode(
   if (
     !original ||
     original.pilotMode === mode ||
-    (mode === 'operator' && original.phase === 'complete')
+    (mode === 'operator' && ['complete', 'scheduled'].includes(original.phase))
   )
     return session
   const s = { ...session, aircraft: copyAircraft(session.aircraft) }
@@ -445,7 +549,7 @@ export function sendPilotCall(
   text: string,
 ): { session: Session; error?: string } {
   const a = session.aircraft.find((item) => item.id === aircraftId)
-  if (!a || a.pilotMode !== 'operator' || a.phase === 'complete')
+  if (!a || a.pilotMode !== 'operator' || ['complete', 'scheduled'].includes(a.phase))
     return { session, error: 'Take over an active aircraft before sending a pilot call.' }
   if (!session.running)
     return { session, error: 'Resume the exercise before sending a pilot call.' }
@@ -468,7 +572,7 @@ export function addObservation(
   severity: SimEvent['severity'],
 ): { session: Session; error?: string } {
   const target = session.events.find((e) => e.id === eventId)
-  if (!target || target.kind === 'note')
+  if (!target || ['note', 'assessment'].includes(target.kind))
     return { session, error: 'Select a recorded exercise event to annotate.' }
   if (!text.trim() || text.length > 1000)
     return { session, error: 'Observations must contain 1–1,000 characters.' }
@@ -493,12 +597,12 @@ function beginAutomaticGoAround(s: Session, a: Aircraft, reason: string): Sessio
   a.runwayOccupied = false
   a.pending = false
   a.clearance = 'Go around'
-  setRoute(a, [{ x: RUNWAYS[a.runway].x, y: -110 }])
+  setRoute(a, [{ x: RUNWAYS[a.runway].x, y: RUNWAYS[a.runway].top - 200 }])
   s = routinePilotReport(s, a, `${a.spoken}, going around, ${reason}.`)
   return record(
     s,
     'instructor',
-    `${a.id}: automatic go-around — ${reason}. This is the exercise decision-point policy, not a published WMKK minimum.`,
+    `${a.id}: automatic go-around — ${reason}. Generic simulator decision policy; not a published WMKK minimum.`,
     { aircraftId: a.id, severity: 'critical' },
   )
 }
@@ -508,8 +612,41 @@ function integrate(session: Session, dt: number): Session {
     ...session,
     time: session.time + dt,
   }
+  for (const trigger of s.exercise.triggers) {
+    if (trigger.at > s.time || s.firedTriggers.includes(trigger.id)) continue
+    s = { ...s, firedTriggers: [...s.firedTriggers, trigger.id] }
+    if (trigger.action === 'readback') s = { ...s, injectReadback: true }
+    else if (trigger.action === 'block') s = { ...s, blockedRunway: trigger.runway }
+    else if (s.blockedRunway === trigger.runway) s = { ...s, blockedRunway: null }
+    s = record(
+      s,
+      'instructor',
+      `Timed event ${trigger.id}: ${trigger.action === 'readback' ? 'scripted readback error armed' : `runway ${trigger.runway} ${trigger.action === 'block' ? 'obstruction placed' : 'obstruction cleared if present'}`}.`,
+      { severity: trigger.action === 'block' ? 'attention' : 'info' },
+    )
+  }
+  if (s.exercise.automaticCoordination)
+    for (const item of s.coordination) {
+      if (item.status === 'pending' && s.time - item.requestedAt >= 8)
+        s = decideCoordination(s, item.id, true, 'scripted').session
+    }
   for (const a of s.aircraft) {
-    if (a.pending && s.time - a.requestAt >= 90 && !a.overdueReported) {
+    if (a.phase === 'scheduled') {
+      if (s.time < a.activationTime) continue
+      const traffic = s.exercise.traffic.find((t) => t.callsign === a.id)!
+      a.phase = exerciseAircraft({
+        ...s.exercise,
+        traffic: [{ ...traffic, releaseAt: 0 }],
+      })[0].phase
+      a.pending = true
+      a.requestAt = s.time
+      s = record(s, 'system', `${a.id} entered the simulation.`, { aircraftId: a.id })
+      s = record(s, 'pilot', pilotRequest(a, s.weather.information), {
+        aircraftId: a.id,
+        frequency: a.frequency,
+      })
+    }
+    if (!s.simulation && a.pending && s.time - a.requestAt >= 90 && !a.overdueReported) {
       a.overdueReported = true
       s = record(
         s,
@@ -554,29 +691,23 @@ function integrate(session: Session, dt: number): Session {
         a.phase = 'landing'
         a.runwayOccupied = true
         a.speed = 110
-        setRoute(a, [
-          { x: runway.x, y: 290 },
-          { x: runway.x + 60, y: 290 },
-        ])
+        setRoute(
+          a,
+          ROLLOUT.map((p) => ({ ...p })),
+        )
         s = record(s, 'system', `${a.id}: touchdown on runway ${a.runway}.`, { aircraftId: a.id })
       }
       continue
     }
-    const movement =
-      (
-        {
-          pushback: 1.5,
-          taxiing: 4,
-          'lining-up': 3,
-          departing: 40,
-          landing: 24,
-          'going-around': 35,
-        } as Partial<Record<Aircraft['phase'], number>>
-      )[a.phase] ?? 0
-    if (!movement) continue
-    a.speed =
-      a.phase === 'taxiing' ? 15 : a.phase === 'pushback' ? 4 : a.phase === 'landing' ? 110 : 145
-    advance(a, movement * dt)
+    if (
+      !['pushback', 'taxiing', 'lining-up', 'departing', 'landing', 'going-around'].includes(
+        a.phase,
+      )
+    )
+      continue
+    const movement = movementStep(a, dt)
+    a.speed = movement.speed
+    advance(a, movement.distance)
     if (a.routeIndex >= a.route.length) {
       a.speed = 0
       if (a.phase === 'lining-up') {
@@ -626,7 +757,7 @@ export function tick(session: Session, delta: number): Session {
   // Substeps prevent an accelerated clock from skipping an approach decision or phase transition.
   while (remaining > 0.000001) {
     const step = Math.min(remaining, 1)
-    s = integrate(s, step)
+    s = replenishTraffic(integrate(s, step))
     remaining -= step
   }
   return s
@@ -649,15 +780,15 @@ export function instructorEvent(
     return record(
       { ...session, guidance: !session.guidance },
       'instructor',
-      `Training guards ${session.guidance ? 'disabled: unsafe runway clearances can be applied and recorded' : 'enabled: occupied-runway clearances are held'}.`,
+      `Runway safety guards ${session.guidance ? 'disabled: unsafe runway clearances can be applied and recorded' : 'enabled: occupied-runway clearances are held'}.`,
     )
   const blockedRunway = session.blockedRunway ? null : runway
   return record(
     { ...session, blockedRunway },
     'instructor',
     blockedRunway
-      ? `Exercise event: inspection vehicle occupying runway ${blockedRunway}.`
-      : `Exercise event: runway ${session.blockedRunway} obstruction removed.`,
+      ? `Airport event: inspection vehicle occupying runway ${blockedRunway}.`
+      : `Airport event: runway ${session.blockedRunway} obstruction removed.`,
     { severity: blockedRunway ? 'attention' : 'info' },
   )
 }
@@ -669,16 +800,141 @@ export function formatTime(seconds: number): string {
 
 export function sessionExport(s: Session) {
   return {
-    schema: 'vatsim-ai.session.v3',
+    schema: 'vatsim-ai.session.v4',
     engineVersion: ENGINE_VERSION,
+    buildCommit: BUILD_COMMIT,
     exportedAt: new Date().toISOString(),
     dataset: AIRPORT_DATA.id,
     limitations: [
-      'Illustrative geometry',
+      'Manually chart-transcribed geometry; professional validation pending',
       'Simplified kinematics',
-      'Scripted or human-operated pilots; no speech recognition',
+      'Scripted or human-operated pilots; optional browser speech drafts',
       'Not validated or approved for professional training',
     ],
     session: { ...s, running: false },
+  }
+}
+
+export function updateWeather(
+  session: Session,
+  value: Weather,
+): { session: Session; error?: string } {
+  try {
+    const weather = decodeWeather(value)
+    return {
+      session: record(
+        { ...session, weather },
+        'instructor',
+        `Exercise weather: wind ${weather.windDirection} degrees ${weather.windSpeed} knots, QNH ${weather.qnh}, information ${weather.information}. Display and briefing only; no aerodynamic model or runway reassignment.`,
+      ),
+    }
+  } catch (e) {
+    return { session, error: e instanceof Error ? e.message : 'Invalid weather.' }
+  }
+}
+export function requestCoordination(
+  session: Session,
+  aircraftId: string,
+): { session: Session; error?: string } {
+  const a = session.aircraft.find((item) => item.id === aircraftId)
+  if (!session.running) return { session, error: 'Resume the exercise before coordinating.' }
+  if (!a || !(a.operation === 'departure' ? a.phase === 'holding' : a.phase === 'vacated'))
+    return {
+      session,
+      error: 'Coordinate a departure holding short or an arrival that has vacated.',
+    }
+  const to = a.operation === 'departure' ? RUNWAYS[a.runway].frequency : RUNWAYS[a.runway].ground
+  if (to === a.frequency)
+    return { session, error: 'This aircraft is already with the next station.' }
+  if (
+    session.coordination.some(
+      (c) =>
+        c.aircraftId === aircraftId &&
+        c.from === a.frequency &&
+        c.to === to &&
+        c.status !== 'declined',
+    )
+  )
+    return { session, error: 'Coordination is already pending or accepted for this transfer.' }
+  const item = {
+    id: session.nextEventId,
+    aircraftId,
+    from: a.frequency,
+    to,
+    requestedAt: session.time,
+    status: 'pending' as const,
+  }
+  return {
+    session: record(
+      { ...session, coordination: [...session.coordination, item] },
+      'coordination',
+      `${aircraftId}: transfer acceptance requested from ${to}, current station ${a.frequency}.`,
+      { aircraftId },
+    ),
+  }
+}
+export function decideCoordination(
+  session: Session,
+  id: number,
+  approved: boolean,
+  source: 'scripted' | 'manual' = 'manual',
+): { session: Session; error?: string } {
+  const item = session.coordination.find((c) => c.id === id)
+  if (!item || item.status !== 'pending')
+    return { session, error: 'This coordination request is no longer pending.' }
+  const coordination = session.coordination.map((c) =>
+    c.id === id
+      ? {
+          ...c,
+          status: approved ? ('approved' as const) : ('declined' as const),
+          decidedAt: session.time,
+        }
+      : { ...c },
+  )
+  return {
+    session: record(
+      { ...session, coordination },
+      'coordination',
+      `${item.aircraftId}: ${item.to} ${approved ? 'accepted' : 'declined'} transfer (${source === 'scripted' ? 'scripted adjacent station' : 'instructor decision'}). Radio ownership changes only when the controller transfer is applied.`,
+      { aircraftId: item.aircraftId },
+    ),
+  }
+}
+export function assessCriterion(
+  session: Session,
+  assessment: Omit<Assessment, 'time'>,
+): { session: Session; error?: string } {
+  const target = session.events.find((e) => e.id === assessment.eventId)
+  if (
+    !session.exercise.criteria.some((c) => c.id === assessment.criterionId) ||
+    !['not-observed', 'needs-review', 'demonstrated'].includes(assessment.rating) ||
+    !assessment.reviewer.trim() ||
+    assessment.reviewer.length > 80 ||
+    assessment.note.length > 1000 ||
+    !target ||
+    ['note', 'assessment'].includes(target.kind)
+  )
+    return {
+      session,
+      error:
+        'Choose a criterion, recorded evidence, rating, and reviewer name (maximum 80 characters); notes are limited to 1,000 characters.',
+    }
+  const item = {
+    ...assessment,
+    reviewer: assessment.reviewer.trim(),
+    note: assessment.note.trim(),
+    time: session.time,
+  }
+  const assessments = [
+    ...session.assessments.filter((a) => a.criterionId !== item.criterionId),
+    item,
+  ]
+  return {
+    session: record(
+      { ...session, assessments },
+      'assessment',
+      `${item.reviewer}: ${session.exercise.criteria.find((c) => c.id === item.criterionId)!.title} — ${item.rating}. ${item.note}`,
+      { relatedEventId: item.eventId, aircraftId: target.aircraftId },
+    ),
   }
 }

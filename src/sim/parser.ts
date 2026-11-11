@@ -20,23 +20,49 @@ const phonetics: Record<string, string> = {
   alfa: 'a',
   bravo: 'b',
   charlie: 'c',
+  delta: 'd',
+  echo: 'e',
+  foxtrot: 'f',
+  golf: 'g',
+  hotel: 'h',
+  india: 'i',
+  juliett: 'j',
+  kilo: 'k',
+  lima: 'l',
+  mike: 'm',
+  november: 'n',
+  oscar: 'o',
+  papa: 'p',
+  quebec: 'q',
+  romeo: 'r',
+  sierra: 's',
+  tango: 't',
+  uniform: 'u',
+  victor: 'v',
+  whiskey: 'w',
+  xray: 'x',
+  yankee: 'y',
   zulu: 'z',
 }
 function normalize(text: string) {
   return text
     .toLowerCase()
     .replace(/\bmalaysian\b/g, 'mas')
-    .replace(/\bair\s?asia\b/g, 'axm')
-    .replace(/\bbatik(?:\s+air)?\b/g, 'mxd')
+    .replace(/\bredcap\b/g, 'axm')
+    .replace(/\bmalindo\b/g, 'mxd')
+    .replace(/\bsingapore\b/g, 'sia')
     .replace(
       /\b(zero|one|two|three|tree|four|five|fife|six|seven|eight|nine|niner)\b/g,
       (word) => digits[word],
     )
-    .replace(/\b(alpha|alfa|bravo|charlie|zulu)\b/g, (word) => phonetics[word])
+    .replace(
+      /\b(alpha|alfa|bravo|charlie|delta|echo|foxtrot|golf|hotel|india|juliett|kilo|lima|mike|november|oscar|papa|quebec|romeo|sierra|tango|uniform|victor|whiskey|xray|yankee|zulu)\b/g,
+      (word) => phonetics[word],
+    )
     .replace(/\b(right|left)\b/g, (word) => (word === 'right' ? 'r' : 'l'))
     .replace(/(?<=\d)\s+(?=\d)/g, '')
     .replace(/(?<=\d)\s+(?=[rl]\b)/g, '')
-    .replace(/\b(mas|axm|mxd)\s+(?=\d)/g, '$1')
+    .replace(/\b(mas|axm|mxd|sia)\s+(?=\d)/g, '$1')
     .replace(/[,;!]/g, ' ')
     .replace(/\.(?!\d)/g, ' ')
     .replace(/\s+/g, ' ')
@@ -94,14 +120,17 @@ export function parseTransmission(input: string, aircraft: Aircraft[]): ParseRes
   }
   if (
     runway &&
-    /^taxi (?:to (?:holding point )?)?runway\s*\d{2}[rl]? via [a-z](?: hold short(?: of)? runway\s*\d{2}[rl]?)?$/.test(
+    /^taxi (?:to (?:holding point )?)?runway\s*\d{2}[rl]? via [a-z][a-z0-9 ]*?(?: hold short(?: of)? runway\s*\d{2}[rl]?)?$/.test(
       body,
     )
   ) {
-    const via = body.match(/via ([a-z])/)![1].toUpperCase()
+    const via = body
+      .match(/via ([a-z0-9 ]+?)(?: hold|$)/)![1]
+      .replace(/([a-z]) +(?=\d)/g, '$1')
+      .toUpperCase()
     return { ok: true, command: { type: 'taxi', aircraftId, runway, via } }
   }
-  const gate = body.match(/^taxi to stand ([a-z]\d{1,2}) via ([a-z])$/)
+  const gate = body.match(/^taxi to stand ([a-z]\d{1,2}) via ([a-z][a-z0-9 ]*)$/)
   if (gate)
     return {
       ok: true,
@@ -109,7 +138,7 @@ export function parseTransmission(input: string, aircraft: Aircraft[]): ParseRes
         type: 'gate',
         aircraftId,
         stand: gate[1].toUpperCase(),
-        via: gate[2].toUpperCase(),
+        via: gate[2].replace(/([a-z]) +(?=\d)/g, '$1').toUpperCase(),
       },
     }
   if (
