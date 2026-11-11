@@ -4479,3 +4479,12 @@ textarea:focus-visible {
 .map-scale {
   bottom: 42px;
 }
+
+.map-canvas,
+.map-canvas * {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.airport-svg {
+  touch-action: none;
+}

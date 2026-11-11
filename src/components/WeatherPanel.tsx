@@ -16,7 +16,7 @@ export default function WeatherPanel({
   const [feedback, setFeedback] = useState('')
   return (
     <details className="instructor-extra">
-      <summary>Exercise weather and information</summary>
+      <summary>Simulation weather and information</summary>
       <p className="pilot-station-help">
         Display and briefing values only; performance and runway configuration do not change.
       </p>
@@ -26,11 +26,11 @@ export default function WeatherPanel({
         disabled={disabled}
         onClick={() =>
           setFeedback(
-            act((s) => updateWeather(s, draft)) ?? 'Exercise weather updated and recorded.',
+            act((s) => updateWeather(s, draft)) ?? 'Simulation weather updated and recorded.',
           )
         }
       >
-        Apply exercise weather
+        Apply simulation weather
       </button>
       {feedback && (
         <p role="status" className="pilot-station-help">

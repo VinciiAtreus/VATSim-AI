@@ -134,7 +134,7 @@ export default function PilotStation({
           </form>
           {!running && (
             <p className="pilot-station-help">
-              Resume the exercise to execute instructions or transmit.
+              Resume the simulation to execute instructions or transmit.
             </p>
           )}
         </>

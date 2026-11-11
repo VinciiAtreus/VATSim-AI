@@ -1,5 +1,6 @@
+import { forkSession } from '../sim/sessionCodec'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createSession, record } from '../sim/engine'
+import { createSimulation, enableContinuous, record } from '../sim/engine'
 import { recoverSession, saveSession } from '../storage/sessionStore'
 import type { Session } from '../sim/types'
 
@@ -10,7 +11,7 @@ export type SaveStatus = {
 }
 
 export function useSession() {
-  const [session, setSession] = useState<Session>(() => createSession())
+  const [session, setSession] = useState<Session>(() => createSimulation())
   const stateRef = useRef(session)
   const [ready, setReady] = useState(false)
   const [notice, setNotice] = useState('')
@@ -67,15 +68,17 @@ export function useSession() {
         if (cancelled) return
         if (recovered.session) {
           const next = record(
-            recovered.session,
+            recovered.session.simulation
+              ? recovered.session
+              : enableContinuous(forkSession(recovered.session)),
             'system',
-            'Exercise recovered from this browser. Clock remains paused until resumed.',
+            'Session recovered from this browser. Clock remains paused until resumed.',
           )
           stateRef.current = next
           revision.current++
           setSession(next)
           setNotice(
-            recovered.warning ?? 'Previous exercise restored paused. Resume when you are ready.',
+            recovered.warning ?? 'Previous session restored paused. Resume when you are ready.',
           )
         } else if (recovered.warning) setNotice(recovered.warning)
         setReady(true)

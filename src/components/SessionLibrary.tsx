@@ -49,10 +49,10 @@ export default function SessionLibrary({
       timeZoneName: 'short',
     }).format(new Date(date))
   return (
-    <ModalShell title="Saved exercises" eyebrow="BROWSER SESSION LIBRARY" onClose={onClose} wide>
+    <ModalShell title="Session archive" eyebrow="BROWSER SESSION LIBRARY" onClose={onClose} wide>
       <p className="modal-intro">
         Checkpoints stay in this browser on this site. Restoring opens a separate paused copy.
-        Export JSON to move an exercise to another browser or keep an independent record.
+        Export JSON to move an session to another browser or keep an independent record.
       </p>
       <div className="library-toolbar">
         <button
@@ -65,7 +65,7 @@ export default function SessionLibrary({
         </button>
         <button className="secondary-button" onClick={onExport}>
           <Download size={15} />
-          Export current exercise
+          Export current session
         </button>
         <label className="primary-button import-button">
           <Upload size={15} />
@@ -99,18 +99,18 @@ export default function SessionLibrary({
                 : 'Local save unavailable. Export a JSON copy.'}
         </span>
         <span>
-          {records.length} saved {records.length === 1 ? 'exercise' : 'exercises'}
+          {records.length} saved {records.length === 1 ? 'session' : 'sessions'}
         </span>
       </div>
       {loading ? (
         <div className="library-empty">
           <LoaderCircle size={23} />
-          <p>Loading saved exercises…</p>
+          <p>Loading saved sessions…</p>
         </div>
       ) : records.length ? (
         <div className="saved-session-list">
           {records.map((saved) => {
-            const exercise = SCENARIOS.find((s) => s.id === saved.scenarioId)
+            const session = SCENARIOS.find((s) => s.id === saved.scenarioId)
             return (
               <div className="saved-session" key={saved.id}>
                 <span className="saved-session-icon">
@@ -118,13 +118,11 @@ export default function SessionLibrary({
                 </span>
                 <div>
                   <span className="eyebrow">
-                    {exercise?.code ?? 'EXERCISE'}
+                    {session?.code ?? 'EXERCISE'}
                     {saved.id === currentId && <span className="current-checkpoint">CURRENT</span>}
                   </span>
                   <h3>
-                    {saved.envelope?.session?.exercise?.title ??
-                      exercise?.title ??
-                      'Saved exercise'}
+                    {saved.envelope?.session?.exercise?.title ?? session?.title ?? 'Saved session'}
                   </h3>
                   <p>
                     <Clock3 size={11} />
@@ -140,14 +138,14 @@ export default function SessionLibrary({
                 <button
                   className="secondary-button"
                   onClick={() => exportOriginal(saved)}
-                  aria-label={`Export original ${exercise?.title ?? 'saved exercise'}`}
+                  aria-label={`Export original ${saved.envelope?.session?.exercise?.title ?? session?.title ?? 'saved session'}`}
                 >
                   Export original
                 </button>
                 <button
                   className="secondary-button"
                   onClick={() => onRestore(saved)}
-                  aria-label={`Restore ${exercise?.title ?? 'saved exercise'}`}
+                  aria-label={`Restore ${saved.envelope?.session?.exercise?.title ?? session?.title ?? 'saved session'}`}
                 >
                   Restore paused
                 </button>
@@ -159,7 +157,7 @@ export default function SessionLibrary({
         <div className="library-empty">
           <HardDrive size={24} />
           <h3>No checkpoints yet</h3>
-          <p>Save the current exercise, or import an exported session.</p>
+          <p>Save the current session, or import an exported session.</p>
         </div>
       )}
       <p className="library-footnote">

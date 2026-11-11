@@ -1,5 +1,9 @@
 # VATSIM AI — session handover
 
+## Continuous simulator direction (0.6.0)
+
+The owner explicitly removed exercise/lesson-first UX. Main flow now runs continuous WMKK traffic with Operations controls, no workshop/objectives/scoring. Default four chart-connected traffic slots replenish with new callsigns; legacy sessions recover into separate continuous copies and originals remain archived. Pan no longer selects text; cursor-anchored native wheel zoom is implemented. Readback voice selection/preview, natural-voice preference and aviation pronunciation use browser speech synthesis. See [CONTINUOUS_SIM.md](CONTINUOUS_SIM.md) for limits and record contracts. Validation: 116 unit tests, 30 browser tests, build, formatting and diff checks passed. The superseded lesson UI browser cases were removed; legacy model/codec tests remain.
+
 ## Readability and speed follow-up
 
 Engine 0.5.1 adds screen-sized overlays, upright gate labels, 20× zoom/focus, owner-corrected telephony and generic acceleration/braking. Measured 1× taxis: MAS612 about 5m41s over 2.21 km, AXM518 about 8m42s over 3.81 km. Version 0.5.0 checkpoints remain readable with a model-change notice; historical snapshots remain unchanged. Verification: 110 unit tests, 32 Chromium browser tests, build, formatting and diff checks passed; maximum-zoom screenshots inspected. See the follow-up section in WMKK_GEOMETRY.md.

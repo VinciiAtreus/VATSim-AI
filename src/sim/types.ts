@@ -104,6 +104,12 @@ export type SimEvent = {
 }
 export type Session = {
   version: 4
+  simulation?: {
+    sequence: number
+    trafficEnabled: boolean
+    registry: { callsign: string; profileId: string; releaseAt: number }[]
+    nextRelease: Record<string, number>
+  }
   id: string
   scenarioId: string
   time: number

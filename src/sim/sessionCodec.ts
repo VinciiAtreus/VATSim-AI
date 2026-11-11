@@ -61,7 +61,7 @@ function aircraft(
   if (!object(value) || typeof value.id !== 'string' || !expectedIds.includes(value.id))
     fail('unknown aircraft identity.')
   const a = value
-  if (modern && !finite(a.activationTime, 0, 3600)) fail('invalid traffic activation time.')
+  if (modern && !finite(a.activationTime, 0, 1e8)) fail('invalid traffic activation time.')
   if (
     !text(a.spoken) ||
     !text(a.stand, 12) ||
@@ -165,8 +165,17 @@ function aircraft(
   }
 }
 
-function fleet(value: unknown, expected: string[], legacy: boolean, modern: boolean): Aircraft[] {
-  if (!Array.isArray(value) || value.length !== expected.length)
+function fleet(
+  value: unknown,
+  expected: string[],
+  legacy: boolean,
+  modern: boolean,
+  dynamic = false,
+): Aircraft[] {
+  if (
+    !Array.isArray(value) ||
+    (dynamic ? value.length < 1 || value.length > 4 : value.length !== expected.length)
+  )
     fail('aircraft count does not match the exercise.')
   const list = value.map((item) => aircraft(item, expected, legacy, modern))
   if (new Set(list.map((a) => a.id)).size !== list.length) fail('duplicate aircraft identity.')
@@ -196,7 +205,10 @@ export function decodeSession(
   const migrated = !modern || value.engineVersion === '0.5.0'
   const legacyControls = legacyV1 || value.schema === 'vatsim-ai.session.v2'
   if (
-    (modern && value.engineVersion !== ENGINE_VERSION && value.engineVersion !== '0.5.0') ||
+    (modern &&
+      value.engineVersion !== ENGINE_VERSION &&
+      value.engineVersion !== '0.5.0' &&
+      value.engineVersion !== '0.5.1') ||
     (value.schema === 'vatsim-ai.session.v3' && value.engineVersion !== '0.3.0') ||
     (value.schema === 'vatsim-ai.session.v2' && value.engineVersion !== '0.2.0')
   )
@@ -226,7 +238,7 @@ export function decodeSession(
   // after an exercise grows beyond the portable-file import limit.
   const historyLimit = source === 'checkpoint' ? 1e8 : 2500
   if (
-    !integer(raw.completed, 16) ||
+    !integer(raw.completed, raw.simulation ? 1000000 : 16) ||
     !integer(raw.attempted, historyLimit) ||
     !integer(raw.accepted, raw.attempted) ||
     !integer(raw.nextEventId) ||
@@ -246,8 +258,46 @@ export function decodeSession(
     fail(e instanceof Error ? e.message : 'invalid exercise definition.')
   }
   if (exercise.id !== raw.scenarioId) fail('exercise identity does not match session.')
-  const ids = exercise.traffic.map((t) => t.callsign)
-  const current = fleet(raw.aircraft, ids, legacyControls, modern)
+  let simulation: Session['simulation']
+  if (raw.simulation !== undefined) {
+    const v = raw.simulation
+    const profiles = ['MAS612', 'MXD124', 'AXM518', 'MAS1134']
+    if (
+      !modern ||
+      !object(v) ||
+      !integer(v.sequence, 9999) ||
+      !bool(v.trafficEnabled) ||
+      !Array.isArray(v.registry) ||
+      v.registry.length < 1 ||
+      v.registry.length > 10000 ||
+      !object(v.nextRelease)
+    )
+      fail('invalid continuous traffic state.')
+    const registry = v.registry.map((t) => {
+      if (
+        !object(t) ||
+        typeof t.callsign !== 'string' ||
+        !/^[A-Z]{3}\d{1,4}$/.test(t.callsign) ||
+        !profiles.includes(t.profileId as string) ||
+        !finite(t.releaseAt, 0, (raw.time as number) + 3600)
+      )
+        fail('invalid traffic registry.')
+      return { callsign: t.callsign, profileId: t.profileId as string, releaseAt: t.releaseAt }
+    })
+    if (new Set(registry.map((t) => t.callsign)).size !== registry.length)
+      fail('duplicate traffic registry identity.')
+    const nextRelease: Record<string, number> = {}
+    for (const [key, value] of Object.entries(v.nextRelease)) {
+      if (!profiles.includes(key) || !finite(value, 0, (raw.time as number) + 3600))
+        fail('invalid traffic release timer.')
+      nextRelease[key] = value
+    }
+    simulation = { sequence: v.sequence, trafficEnabled: v.trafficEnabled, registry, nextRelease }
+  }
+  const ids = simulation
+    ? simulation.registry.map((t) => t.callsign)
+    : exercise.traffic.map((t) => t.callsign)
+  const current = fleet(raw.aircraft, ids, legacyControls, modern, !!simulation)
   if (value.engineVersion === '0.5.0')
     for (const a of current) a.spoken = applyTelephony(a.id, a.spoken)
   const weather = modern ? decodeWeather(raw.weather) : { ...DEFAULT_WEATHER }
@@ -326,7 +376,7 @@ export function decodeSession(
       aircraftId: item.aircraftId as string | undefined,
       frequency: item.frequency as SimEvent['frequency'],
       blockedRunway: item.blockedRunway as SimEvent['blockedRunway'],
-      snapshot: fleet(item.snapshot, ids, legacyControls, modern),
+      snapshot: fleet(item.snapshot, ids, legacyControls, modern, !!simulation),
       weather: modern ? decodeWeather(item.weather) : { ...DEFAULT_WEATHER },
       coordination: modern
         ? decodeCoordination(item.coordination, ids, item.time, historyLimit)
@@ -363,7 +413,10 @@ export function decodeSession(
     }
     for (const a of list) {
       if (
-        a.activationTime !== exercise.traffic.find((t) => t.callsign === a.id)!.releaseAt ||
+        a.activationTime !==
+          (simulation
+            ? simulation.registry.find((t) => t.callsign === a.id)!.releaseAt
+            : exercise.traffic.find((t) => t.callsign === a.id)!.releaseAt) ||
         (time < a.activationTime &&
           (a.phase !== 'scheduled' || a.pending || a.runwayOccupied || a.speed !== 0))
       )
@@ -387,7 +440,14 @@ export function decodeSession(
   }
   if (
     raw.nextEventId <= lastId ||
-    raw.completed !== current.filter((a) => a.phase === 'complete').length ||
+    raw.completed !==
+      (simulation
+        ? new Set(
+            [...current, ...events.flatMap((e) => e.snapshot)]
+              .filter((a) => a.phase === 'complete')
+              .map((a) => a.id),
+          ).size
+        : current.filter((a) => a.phase === 'complete').length) ||
     raw.attempted !== events.filter((e) => e.kind === 'controller').length
   )
     fail('session counters do not match its history.')
@@ -406,6 +466,7 @@ export function decodeSession(
     migrated,
     session: {
       version: 4,
+      ...(simulation ? { simulation } : {}),
       exercise,
       weather,
       coordination,
@@ -452,6 +513,7 @@ export function forkSession(source: Session): Session {
     ...source,
     id: crypto.randomUUID(),
     running: false,
+    ...(source.simulation ? { simulation: structuredClone(source.simulation) } : {}),
     exercise: decodeExercise(source.exercise),
     weather: { ...source.weather },
     coordination: source.coordination.map((c) => ({ ...c })),

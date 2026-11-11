@@ -1,7 +1,7 @@
 import { AIRPORT_DATA } from '../sim/airport'
 import { BUILD_COMMIT, ENGINE_VERSION } from '../sim/version'
 import type { ExerciseDefinition } from '../sim/types'
-export default function DataReadiness({ exercise }: { exercise: ExerciseDefinition }) {
+export default function DataReadiness(_props: { exercise: ExerciseDefinition }) {
   return (
     <section className="settings-section">
       <h3>Release and source readiness</h3>
@@ -17,16 +17,6 @@ export default function DataReadiness({ exercise }: { exercise: ExerciseDefiniti
         <div>
           <dt>Airport dataset</dt>
           <dd>{AIRPORT_DATA.id} · chart-transcribed, professionally unvalidated</dd>
-        </div>
-        <div>
-          <dt>Lesson</dt>
-          <dd>
-            {exercise.title} · revision {exercise.revision}
-          </dd>
-        </div>
-        <div>
-          <dt>Criteria status</dt>
-          <dd>Author-defined development draft; instructor validation pending</dd>
         </div>
       </dl>
       <ul className="source-readiness">

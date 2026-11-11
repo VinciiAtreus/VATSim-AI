@@ -157,7 +157,7 @@ test('retains a 0.5.0 checkpoint when recovering it into the updated motion mode
   expect(
     records.some(
       (r) =>
-        r.id !== old.id && r.scenarioId === 'departure' && r.envelope.engineVersion === '0.5.1',
+        r.id !== old.id && r.scenarioId === 'departure' && r.envelope.engineVersion === '0.6.0',
     ),
   ).toBe(true)
 })

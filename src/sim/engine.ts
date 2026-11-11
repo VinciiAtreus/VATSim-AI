@@ -1,3 +1,5 @@
+import { initialAircraft } from './airport'
+import { spokenCallsign } from './callsigns'
 import { movementStep } from './motion'
 import { PUSHBACK, STANDS, departurePath, ARRIVAL_PATH, ARRIVAL_ROUTE, ROLLOUT } from './geometry'
 import {
@@ -93,6 +95,76 @@ export function createSession(scenarioId = 'morning', definition?: ExerciseDefin
   return s
 }
 
+export function enableContinuous(s: Session): Session {
+  return {
+    ...s,
+    exercise: {
+      ...s.exercise,
+      title: 'WMKK continuous operations',
+      objective: 'Continuous WMKK arrivals and departures.',
+      triggers: [],
+    },
+    firedTriggers: [],
+    injectReadback: false,
+    simulation: {
+      sequence: 700,
+      trafficEnabled: true,
+      registry: s.exercise.traffic.map((t) => ({
+        callsign: t.callsign,
+        profileId: t.profileId,
+        releaseAt: t.releaseAt,
+      })),
+      nextRelease: {},
+    },
+  }
+}
+export function createSimulation(): Session {
+  return enableContinuous(createSession('morning'))
+}
+function replenishTraffic(s: Session): Session {
+  if (!s.simulation) return s
+  const sim = {
+    ...s.simulation,
+    registry: [...s.simulation.registry],
+    nextRelease: { ...s.simulation.nextRelease },
+  }
+  s = { ...s, simulation: sim }
+  const profiles = initialAircraft('morning')
+  for (let i = 0; i < s.aircraft.length; i++) {
+    const old = s.aircraft[i]
+    if (old.phase !== 'complete') continue
+    const profileId = sim.registry.find((t) => t.callsign === old.id)!.profileId
+    if (sim.nextRelease[profileId] === undefined)
+      sim.nextRelease[profileId] = s.time + (old.operation === 'arrival' ? 120 : 90)
+    if (!sim.trafficEnabled || s.time < sim.nextRelease[profileId]) continue
+    const profile = profiles.find((p) => p.id === profileId)!
+    const prefix =
+      profileId === 'MAS1134' && sim.sequence % 2 === 0 ? 'SIA' : profile.id.slice(0, 3)
+    let id = ''
+    do {
+      sim.sequence = (sim.sequence + 1) % 10000
+      id = `${prefix}${sim.sequence}`
+    } while (sim.registry.some((t) => t.callsign === id))
+    const a = {
+      ...profile,
+      id,
+      spoken: spokenCallsign(id)!,
+      position: { ...profile.position },
+      activationTime: s.time,
+      requestAt: s.time,
+    }
+    s.aircraft[i] = a
+    sim.registry.push({ callsign: id, profileId, releaseAt: s.time })
+    delete sim.nextRelease[profileId]
+    s = record(s, 'system', `${id}: new ${a.operation} traffic released.`, { aircraftId: id })
+    s = record(s, 'pilot', pilotRequest(a, s.weather.information), {
+      aircraftId: id,
+      frequency: a.frequency,
+    })
+  }
+  return s
+}
+
 function setRoute(a: Aircraft, route: Point[]) {
   a.route = route
   a.routeIndex = 0
@@ -106,7 +178,7 @@ function occupied(s: Session, runway: RunwayId, ownId: string) {
 }
 
 function validate(s: Session, a: Aircraft, c: Command, frequency: Frequency): string | null {
-  if (a.phase === 'scheduled') return 'This aircraft has not entered the exercise yet.'
+  if (a.phase === 'scheduled') return 'This aircraft has not entered the simulation yet.'
   if (a.phase === 'complete') return 'This aircraft has completed its exercise.'
   if (frequency !== a.frequency)
     return `No response: ${a.id} is on ${a.frequency}. Select the correct transmit frequency.`
@@ -157,19 +229,19 @@ function validate(s: Session, a: Aircraft, c: Command, frequency: Frequency): st
       if (a.phase !== 'holding' || a.frequency !== r.frequency)
         return 'Line-up requires the aircraft holding short on the correct tower frequency.'
       return occupied(s, a.runway, a.id) && s.guidance
-        ? 'Training guard: runway occupied. Hold the aircraft or remove the obstruction in Instructor controls.'
+        ? 'Runway safety guard: runway occupied. Hold the aircraft or remove the obstruction in Operations controls.'
         : null
     case 'takeoff':
       if (a.phase !== 'lined-up' || a.frequency !== r.frequency)
         return 'Aircraft must be lined up on the correct tower frequency before departure.'
       return occupied(s, a.runway, a.id) && s.guidance
-        ? 'Training guard: runway occupied. Takeoff clearance has not been applied.'
+        ? 'Runway safety guard: runway occupied. Takeoff clearance has not been applied.'
         : null
     case 'land':
       if (a.phase !== 'final' || a.frequency !== r.frequency)
         return 'Landing clearance requires an arrival on final on the correct tower frequency.'
       return occupied(s, a.runway, a.id) && s.guidance
-        ? 'Training guard: runway occupied. Landing clearance has not been applied.'
+        ? 'Runway safety guard: runway occupied. Landing clearance has not been applied.'
         : null
     case 'goaround':
       return a.phase !== 'final' ? 'Go-around is available for an arrival on final.' : null
@@ -530,7 +602,7 @@ function beginAutomaticGoAround(s: Session, a: Aircraft, reason: string): Sessio
   return record(
     s,
     'instructor',
-    `${a.id}: automatic go-around — ${reason}. This is the exercise decision-point policy, not a published WMKK minimum.`,
+    `${a.id}: automatic go-around — ${reason}. Generic simulator decision policy; not a published WMKK minimum.`,
     { aircraftId: a.id, severity: 'critical' },
   )
 }
@@ -568,13 +640,13 @@ function integrate(session: Session, dt: number): Session {
       })[0].phase
       a.pending = true
       a.requestAt = s.time
-      s = record(s, 'system', `${a.id} entered the exercise.`, { aircraftId: a.id })
+      s = record(s, 'system', `${a.id} entered the simulation.`, { aircraftId: a.id })
       s = record(s, 'pilot', pilotRequest(a, s.weather.information), {
         aircraftId: a.id,
         frequency: a.frequency,
       })
     }
-    if (a.pending && s.time - a.requestAt >= 90 && !a.overdueReported) {
+    if (!s.simulation && a.pending && s.time - a.requestAt >= 90 && !a.overdueReported) {
       a.overdueReported = true
       s = record(
         s,
@@ -685,7 +757,7 @@ export function tick(session: Session, delta: number): Session {
   // Substeps prevent an accelerated clock from skipping an approach decision or phase transition.
   while (remaining > 0.000001) {
     const step = Math.min(remaining, 1)
-    s = integrate(s, step)
+    s = replenishTraffic(integrate(s, step))
     remaining -= step
   }
   return s
@@ -708,15 +780,15 @@ export function instructorEvent(
     return record(
       { ...session, guidance: !session.guidance },
       'instructor',
-      `Training guards ${session.guidance ? 'disabled: unsafe runway clearances can be applied and recorded' : 'enabled: occupied-runway clearances are held'}.`,
+      `Runway safety guards ${session.guidance ? 'disabled: unsafe runway clearances can be applied and recorded' : 'enabled: occupied-runway clearances are held'}.`,
     )
   const blockedRunway = session.blockedRunway ? null : runway
   return record(
     { ...session, blockedRunway },
     'instructor',
     blockedRunway
-      ? `Exercise event: inspection vehicle occupying runway ${blockedRunway}.`
-      : `Exercise event: runway ${session.blockedRunway} obstruction removed.`,
+      ? `Airport event: inspection vehicle occupying runway ${blockedRunway}.`
+      : `Airport event: runway ${session.blockedRunway} obstruction removed.`,
     { severity: blockedRunway ? 'attention' : 'info' },
   )
 }

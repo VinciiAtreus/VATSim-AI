@@ -98,7 +98,7 @@ describe('authored exercises and integrated runtime', () => {
     expect(s.aircraft[0].phase).toBe('parked')
     expect(s.events.at(-1)?.text).toMatch(/information Charlie/)
     s = tick(s, 5)
-    expect(s.events.filter((e) => e.text.includes('entered the exercise'))).toHaveLength(1)
+    expect(s.events.filter((e) => e.text.includes('entered the simulation'))).toHaveLength(1)
     expect(decodeSession(sessionExport(s)).session.aircraft[0].id).toBe('MAS900')
   })
   it('fires ordered timed events exactly once under accelerated time and recovery', () => {

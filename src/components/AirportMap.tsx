@@ -68,6 +68,30 @@ export default function AirportMap({
   const fitSize = Math.max(950, maxY - minY + 140, maxX - minX + 200)
   const fitY = (minY + maxY) / 2,
     fitX = (minX + maxX) / 2 + 40
+  const viewRef = useRef({ fitSize, fitX, fitY, zoom, offset, canvasSize })
+  viewRef.current = { fitSize, fitX, fitY, zoom, offset, canvasSize }
+  useEffect(() => {
+    const svg = svgRef.current
+    if (!svg) return
+    const wheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const v = viewRef.current,
+        rect = svg.getBoundingClientRect()
+      const next = Math.max(
+        0.65,
+        Math.min(20, v.zoom * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.035 : 0.0015))),
+      )
+      const size = Math.min(rect.width, rect.height)
+      const px = (e.clientX - rect.left - rect.width / 2) / size,
+        py = (e.clientY - rect.top - rect.height / 2) / size
+      const delta = v.fitSize / v.zoom - v.fitSize / next
+      setOffset({ x: v.offset.x + px * delta, y: v.offset.y + py * delta })
+      setZoom(next)
+    }
+    const surface = svg.parentElement!
+    surface.addEventListener('wheel', wheel, { passive: false })
+    return () => surface.removeEventListener('wheel', wheel)
+  }, [])
   const unitsPerPixel = fitSize / zoom / Math.max(1, canvasSize)
   const scaleTarget = 80 * unitsPerPixel * METRES_PER_UNIT
   const magnitude = 10 ** Math.floor(Math.log10(scaleTarget))
@@ -125,9 +149,12 @@ export default function AirportMap({
           viewBox={`${fitX - fitSize / 2 / zoom + offset.x} ${fitY - fitSize / 2 / zoom + offset.y} ${fitSize / zoom} ${fitSize / zoom}`}
           role="img"
           aria-label="Chart-transcribed airport layout with three runway pairs. Use the flight strip list to select an aircraft."
+          onDragStart={(e) => e.preventDefault()}
           onPointerDown={(e) => {
             if ((e.target as Element).closest('[data-aircraft]')) return
             if (e.button === 0) {
+              e.preventDefault()
+              window.getSelection()?.removeAllRanges()
               e.currentTarget.setPointerCapture(e.pointerId)
               setDrag({ x: e.clientX, y: e.clientY, ox: offset.x, oy: offset.y })
             }
@@ -144,6 +171,7 @@ export default function AirportMap({
           }}
           onPointerUp={() => setDrag(null)}
           onPointerCancel={() => setDrag(null)}
+          onLostPointerCapture={() => setDrag(null)}
         >
           <defs>
             <pattern id="map-grid" width="55" height="55" patternUnits="userSpaceOnUse">
@@ -182,7 +210,7 @@ export default function AirportMap({
                   stroke="#baad67"
                   strokeWidth=".55"
                 />
-                {labels && (
+                {labels && zoom >= 2 && (
                   <text
                     x={line.points[0].x + 4}
                     y={line.points[0].y - 4}
