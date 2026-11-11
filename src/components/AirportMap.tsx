@@ -13,9 +13,10 @@ import {
   MAP_ROTATION,
 } from '../sim/geometry'
 import { RUNWAYS } from '../sim/airport'
-import type { Aircraft, RunwayId, Weather } from '../sim/types'
+import type { Aircraft, RunwayId, Weather, Point } from '../sim/types'
 import { stopBarOff } from '../workstation/model'
 import { placeLabels, rotatePoint } from '../workstation/labels'
+import { layoutChartLabels } from '../workstation/chartLabels'
 type Props = {
   aircraft: Aircraft[]
   selected: string
@@ -37,10 +38,11 @@ export default function AirportMap({
   criticalAircraft,
 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
-  const [canvasSize, setCanvasSize] = useState(440)
+  const [viewport, setViewport] = useState({ width: 800, height: 500 })
+  const canvasSize = Math.min(viewport.width, viewport.height)
   useEffect(() => {
     const observer = new ResizeObserver(([entry]) =>
-      setCanvasSize(Math.min(entry.contentRect.width, entry.contentRect.height)),
+      setViewport({ width: entry.contentRect.width, height: entry.contentRect.height }),
     )
     if (svgRef.current?.parentElement) observer.observe(svgRef.current.parentElement)
     return () => observer.disconnect()
@@ -65,7 +67,6 @@ export default function AirportMap({
     rotate({ x: r.x, y: r.top }),
     rotate({ x: r.x, y: r.bottom }),
   ])
-  if (selectedAircraft?.phase === 'final') bounds.push(rotate(selectedAircraft.position))
   const minY = Math.min(...bounds.map((p) => p.y)),
     maxY = Math.max(...bounds.map((p) => p.y))
   const minX = Math.min(...bounds.map((p) => p.x)),
@@ -107,18 +108,34 @@ export default function AirportMap({
       .at(-1) ?? magnitude
   const scalePixels = scaleMetres / METRES_PER_UNIT / unitsPerPixel
   const active = aircraft.filter((a) => !['complete', 'scheduled'].includes(a.phase))
-  const labelScale = (unitsPerPixel * 11) / 13
-  const targetLabels = useMemo(() => placeLabels(active, labelScale), [aircraft, labelScale])
-
+  const labelScale = 11 / 13
+  const project = (p: Point) => {
+    const rotated = rotatePoint(p)
+    return {
+      x: (rotated.x - fitX - offset.x) / unitsPerPixel + viewport.width / 2,
+      y: (rotated.y - fitY - offset.y) / unitsPerPixel + viewport.height / 2,
+    }
+  }
+  const targetLabels = useMemo(
+    () => placeLabels(active, labelScale, project, viewport),
+    [aircraft, unitsPerPixel, fitX, fitY, offset.x, offset.y, viewport],
+  )
+  const airportLabels = layoutChartLabels(project, viewport, targetLabels, {
+    stands: showStands,
+    taxiways: showTaxi,
+    zoom,
+    selectedStand: selectedAircraft?.stand,
+  })
   return (
     <section className="surface-display" aria-label="WMKK chart-transcribed airport display">
       <div className="equipment-heading">
         <h2>{replay ? 'SESSION REPLAY' : 'Surface movement · A-SMGCS'}</h2>
-        <div>
+        <div className="map-layers">
           <button aria-pressed={routes} onClick={() => setRoutes(!routes)}>
             Routes
           </button>
           <button
+            aria-pressed={showStands || showTaxi}
             onClick={() => {
               const next = !(showStands && showTaxi)
               setShowStands(next)
@@ -135,7 +152,30 @@ export default function AirportMap({
           </button>
         </div>
       </div>
-      <div className="surface-canvas">
+      <div
+        className="surface-canvas"
+        onPointerDown={(e) => {
+          if (e.button !== 0 || (e.target as Element).closest('button, summary')) return
+          const target = (e.target as Element).closest('[data-aircraft]')
+          if (target) onSelect(target.getAttribute('data-aircraft')!)
+          e.preventDefault()
+          window.getSelection()?.removeAllRanges()
+          e.currentTarget.setPointerCapture(e.pointerId)
+          setDrag({ x: e.clientX, y: e.clientY, ox: offset.x, oy: offset.y })
+        }}
+        onPointerMove={(e) => {
+          if (!drag) return
+          const rect = e.currentTarget.getBoundingClientRect(),
+            scale = fitSize / zoom / Math.min(rect.width, rect.height)
+          setOffset({
+            x: drag.ox - (e.clientX - drag.x) * scale,
+            y: drag.oy - (e.clientY - drag.y) * scale,
+          })
+        }}
+        onPointerUp={() => setDrag(null)}
+        onPointerCancel={() => setDrag(null)}
+        onLostPointerCapture={() => setDrag(null)}
+      >
         <span className="north-wind">
           ▲ N · W {wind} · QNH {weather.qnh}
         </span>
@@ -144,44 +184,15 @@ export default function AirportMap({
           className="surface-svg airport-svg"
           viewBox={`${fitX - fitSize / 2 / zoom + offset.x} ${fitY - fitSize / 2 / zoom + offset.y} ${fitSize / zoom} ${fitSize / zoom}`}
           role="img"
-          aria-label="Chart-transcribed airport layout with selectable aircraft"
-          onPointerDown={(e) => {
-            if ((e.target as Element).closest('[data-aircraft]')) return
-            e.preventDefault()
-            window.getSelection()?.removeAllRanges()
-            e.currentTarget.setPointerCapture(e.pointerId)
-            setDrag({ x: e.clientX, y: e.clientY, ox: offset.x, oy: offset.y })
-          }}
-          onPointerMove={(e) => {
-            if (!drag) return
-            const rect = e.currentTarget.getBoundingClientRect()
-            const scale = fitSize / zoom / Math.min(rect.width, rect.height)
-            setOffset({
-              x: drag.ox - (e.clientX - drag.x) * scale,
-              y: drag.oy - (e.clientY - drag.y) * scale,
-            })
-          }}
-          onPointerUp={() => setDrag(null)}
-          onPointerCancel={() => setDrag(null)}
+          aria-label="Chart-transcribed airport layout"
         >
           <g transform={`rotate(${MAP_ROTATION} 470 380)`}>
             {CONTEXT_LINES.map((line, i) => (
-              <g key={`context-${i}`}>
-                <polyline
-                  className="taxiway-line"
-                  points={line.points.map((p) => `${p.x},${p.y}`).join(' ')}
-                />
-                {showTaxi && zoom >= 2 && (
-                  <text
-                    className="chart-label"
-                    x={line.points[0].x}
-                    y={line.points[0].y - 3}
-                    style={{ fontSize: 11 * unitsPerPixel }}
-                  >
-                    {line.name}
-                  </text>
-                )}
-              </g>
+              <polyline
+                key={`context-${i}`}
+                className="taxiway-line"
+                points={line.points.map((p) => `${p.x},${p.y}`).join(' ')}
+              />
             ))}
             {SURFACE_EDGES.map(([from, to]) => (
               <line
@@ -193,78 +204,48 @@ export default function AirportMap({
                 y2={NODES[to].y}
               />
             ))}
-            {TERMINALS.map((t) => {
-              const points = t.points.map(([x, y]) => chart(x, y))
-              const x = points.reduce((sum, p) => sum + p.x, 0) / points.length,
-                y = points.reduce((sum, p) => sum + p.y, 0) / points.length
-              return (
-                <g key={t.name}>
-                  <polygon
-                    className="terminal-building"
-                    points={points.map((p) => `${p.x},${p.y}`).join(' ')}
-                  />
-                  {showStands && (
-                    <text
-                      transform={`rotate(${-MAP_ROTATION} ${x} ${y})`}
-                      x={x}
-                      y={y - 15}
-                      textAnchor="middle"
-                      className="chart-label"
-                      style={{ fontSize: 11 * unitsPerPixel }}
-                    >
-                      {t.name}
-                    </text>
-                  )}
-                </g>
-              )
-            })}
+            {TERMINALS.map((t) => (
+              <polygon
+                key={t.name}
+                className="terminal-building"
+                points={t.points
+                  .map(([x, y]) => {
+                    const p = chart(x, y)
+                    return `${p.x},${p.y}`
+                  })
+                  .join(' ')}
+              >
+                <title>{t.name}</title>
+              </polygon>
+            ))}
             {showStands &&
-              zoom >= 1.5 &&
+              zoom >= 3 &&
               PARKING_STANDS.map(({ name, position, apron }) => (
-                <g key={name}>
-                  <line
-                    className="stand-position"
-                    x1={position.x}
-                    y1={position.y}
-                    x2={apron.x}
-                    y2={apron.y}
-                  />
-                  <text
-                    data-gate={name}
-                    transform={`translate(${position.x} ${position.y}) rotate(${-MAP_ROTATION})`}
-                    y={-3 * unitsPerPixel}
-                    textAnchor="middle"
-                    className="chart-label"
-                    style={{ fontSize: 11 * unitsPerPixel }}
-                  >
-                    {name}
-                  </text>
-                </g>
+                <line
+                  key={name}
+                  className="stand-position"
+                  x1={position.x}
+                  y1={position.y}
+                  x2={apron.x}
+                  y2={apron.y}
+                />
               ))}
             {showStands &&
               Object.entries(STANDS).map(([name, p]) => (
-                <g key={name}>
-                  <line
-                    className="stand-position"
-                    x1={p.x}
-                    y1={p.y}
-                    x2={PUSHBACK[name as keyof typeof PUSHBACK].x}
-                    y2={PUSHBACK[name as keyof typeof PUSHBACK].y}
-                  />
-                  <text
-                    data-gate={name}
-                    transform={`translate(${p.x} ${p.y}) rotate(${-MAP_ROTATION})`}
-                    y={-8 * unitsPerPixel}
-                    textAnchor="middle"
-                    className="chart-label"
-                    style={{ fontSize: 12 * unitsPerPixel }}
-                  >
-                    {name}
-                  </text>
-                </g>
+                <line
+                  key={name}
+                  className="stand-position"
+                  x1={p.x}
+                  y1={p.y}
+                  x2={PUSHBACK[name as keyof typeof PUSHBACK].x}
+                  y2={PUSHBACK[name as keyof typeof PUSHBACK].y}
+                />
               ))}
             {Object.entries(RUNWAYS).map(([id, r]) => (
               <g key={id}>
+                <title>
+                  {id} · {HOLD_NAMES[id as RunwayId]} HOLD
+                </title>
                 <rect
                   className={`runway-surface ${blockedRunway === id ? 'blocked' : ''}`}
                   x={r.x - 3}
@@ -279,22 +260,6 @@ export default function AirportMap({
                   x2={r.x}
                   y2={r.bottom - 12}
                 />
-                <text
-                  className="runway-designator"
-                  x={r.x + 7}
-                  y={r.top + 8}
-                  style={{ fontSize: 14 * unitsPerPixel }}
-                >
-                  {r.opposite}
-                </text>
-                <text
-                  className="runway-designator"
-                  x={r.x + 7}
-                  y={r.bottom}
-                  style={{ fontSize: 14 * unitsPerPixel }}
-                >
-                  {id}
-                </text>
                 <line
                   className="taxiway-line"
                   x1={r.hold.x}
@@ -309,16 +274,6 @@ export default function AirportMap({
                   x2={r.hold.x}
                   y2={r.hold.y + 4}
                 />
-                {showTaxi && (
-                  <text
-                    className="chart-label"
-                    x={r.hold.x + 4}
-                    y={r.hold.y - 6}
-                    style={{ fontSize: 11 * unitsPerPixel }}
-                  >
-                    {HOLD_NAMES[id as RunwayId]} HOLD
-                  </text>
-                )}
               </g>
             ))}
             {routes && route.length > 1 && (
@@ -328,9 +283,39 @@ export default function AirportMap({
               />
             )}
           </g>
+        </svg>
+        <svg
+          className="surface-overlay"
+          viewBox={`0 0 ${viewport.width} ${viewport.height}`}
+          role="group"
+          aria-label="Aircraft targets and airport labels"
+        >
+          <g className="airport-labels" aria-hidden="true">
+            {airportLabels.map((l) => (
+              <g key={l.id} data-chart-label={l.id}>
+                <rect x={l.x} y={l.y} width={l.width} height={l.height} />
+                <text
+                  data-gate={l.kind === 'stand' ? l.text : undefined}
+                  x={l.x + l.width / 2}
+                  y={l.y + 13}
+                  textAnchor="middle"
+                  className={`chart-screen-label ${l.kind}`}
+                >
+                  {l.text}
+                </text>
+              </g>
+            ))}
+          </g>
           {active.map((a) => {
-            const point = rotatePoint(a.position),
+            const point = project(a.position),
               label = targetLabels.find((l) => l.id === a.id)!
+            if (
+              point.x < -20 ||
+              point.y < -20 ||
+              point.x > viewport.width + 20 ||
+              point.y > viewport.height + 20
+            )
+              return null
             return (
               <g
                 key={a.id}
@@ -339,7 +324,9 @@ export default function AirportMap({
                 role="button"
                 tabIndex={0}
                 aria-label={`Target ${a.id}`}
+                aria-pressed={selected === a.id}
                 onClick={() => onSelect(a.id)}
+                onFocus={() => onSelect(a.id)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
@@ -362,17 +349,17 @@ export default function AirportMap({
                   height="40"
                 />
                 {selected === a.id && (
-                  <circle className="selection-ring" cx={point.x} cy={point.y} r={8 * labelScale} />
+                  <circle className="selection-ring" cx={point.x} cy={point.y} r="9" />
                 )}
                 {a.operation === 'departure' ? (
-                  <circle className="target-symbol" cx={point.x} cy={point.y} r={5 * labelScale} />
+                  <circle className="target-symbol" cx={point.x} cy={point.y} r="5" />
                 ) : (
                   <rect
                     className="target-symbol"
-                    x={point.x - 5 * labelScale}
-                    y={point.y - 5 * labelScale}
-                    width={10 * labelScale}
-                    height={10 * labelScale}
+                    x={point.x - 5}
+                    y={point.y - 5}
+                    width="10"
+                    height="10"
                   />
                 )}
                 <rect
@@ -384,7 +371,7 @@ export default function AirportMap({
                 />
                 <text
                   className="target-label"
-                  style={{ fontSize: 13 * labelScale }}
+                  style={{ fontSize: 11 }}
                   x={label.x + 5 * labelScale}
                   y={label.y + 16 * labelScale}
                 >
@@ -393,7 +380,7 @@ export default function AirportMap({
                 {!label.compact && (
                   <text
                     className="target-detail"
-                    style={{ fontSize: 13 * labelScale }}
+                    style={{ fontSize: 11 }}
                     x={label.x + 5 * labelScale}
                     y={label.y + 32 * labelScale}
                   >
@@ -414,7 +401,7 @@ export default function AirportMap({
           <span
             style={{ width: scalePixels, borderTop: '1px solid currentColor', display: 'block' }}
           />
-          <span>{scaleMetres >= 1000 ? `${scaleMetres / 1000} km` : `${scaleMetres} m`}</span>
+          <small>{scaleMetres >= 1000 ? `${scaleMetres / 1000} km` : `${scaleMetres} m`}</small>
         </div>
         <div className="surface-zoom">
           <button
@@ -428,10 +415,10 @@ export default function AirportMap({
           >
             ◎
           </button>
-          <button onClick={() => setZoom(Math.min(20, zoom * 1.5))} aria-label="Zoom in">
+          <button onClick={() => setZoom((z) => Math.min(20, z * 1.5))} aria-label="Zoom in">
             +
           </button>
-          <button onClick={() => setZoom(Math.max(0.65, zoom / 1.5))} aria-label="Zoom out">
+          <button onClick={() => setZoom((z) => Math.max(0.65, z / 1.5))} aria-label="Zoom out">
             −
           </button>
           <button

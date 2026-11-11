@@ -686,16 +686,17 @@ export default function App() {
             >
               {session.running ? 'Pause' : session.time ? 'Resume' : 'Run'}
             </button>
-            {([1, 2, 4] as const).map((speed) => (
-              <button
-                key={speed}
-                aria-pressed={session.speed === speed}
-                onClick={() => update((s) => ({ ...s, speed }))}
-              >
-                {speed}×
-              </button>
-            ))}
-            <button onClick={() => setModal('simulation')}>Reset</button>
+            <div className="sim-speed" aria-label="Simulation speed">
+              {([1, 2, 4] as const).map((speed) => (
+                <button
+                  key={speed}
+                  aria-pressed={session.speed === speed}
+                  onClick={() => update((s) => ({ ...s, speed }))}
+                >
+                  {speed}×
+                </button>
+              ))}
+            </div>
             <span className="sim-elapsed">
               T+{formatTime(session.time)} · MOV {session.completed}
             </span>
@@ -716,6 +717,7 @@ export default function App() {
             <details>
               <summary aria-label="Simulator menu">Menu</summary>
               <div>
+                <button onClick={() => setModal('simulation')}>Reset / new session</button>
                 <button onClick={exportSession}>Download JSON</button>
               </div>
             </details>
@@ -1103,14 +1105,27 @@ export default function App() {
                     </p>
                   )}
                 </div>
-                <CoordinationPanel
-                  key={`${session.id}-${selected.id}`}
-                  aircraft={selected}
-                  items={replayEvent?.coordination ?? session.coordination}
-                  required={session.exercise.requireCoordination}
-                  disabled={!ready || !session.running || replayIndex !== null}
-                  act={act}
-                />
+                <details
+                  className="coordination-extra"
+                  open={
+                    session.exercise.requireCoordination ||
+                    (replayEvent?.coordination ?? session.coordination).some(
+                      (c) => c.aircraftId === selected.id,
+                    )
+                  }
+                >
+                  <summary>
+                    Coordination · {session.exercise.requireCoordination ? 'required' : 'optional'}
+                  </summary>
+                  <CoordinationPanel
+                    key={`${session.id}-${selected.id}`}
+                    aircraft={selected}
+                    items={replayEvent?.coordination ?? session.coordination}
+                    required={session.exercise.requireCoordination}
+                    disabled={!ready || !session.running || replayIndex !== null}
+                    act={act}
+                  />
+                </details>
                 <section className="ptt-equipment">
                   <h3>Push to talk</h3>
                   <button
