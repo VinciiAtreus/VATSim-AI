@@ -17,20 +17,42 @@ export function spokenReadback(text: string): string {
     B: 'Bravo',
     C: 'Charlie',
     D: 'Delta',
+    E: 'Echo',
     F: 'Foxtrot',
     G: 'Golf',
+    H: 'Hotel',
+    I: 'India',
+    J: 'Juliett',
+    K: 'Kilo',
+    L: 'Lima',
+    M: 'Mike',
+    N: 'November',
+    O: 'Oscar',
+    P: 'Papa',
+    Q: 'Quebec',
+    R: 'Romeo',
+    S: 'Sierra',
     T: 'Tango',
     U: 'Uniform',
+    V: 'Victor',
+    W: 'Whiskey',
+    X: 'X-ray',
     Y: 'Yankee',
     Z: 'Zulu',
   }
+  const identifier = (s: string) =>
+    `${letters[s[0]]}${s.length > 1 ? ' ' + number(s.slice(1)) : ''}`
   return text
+    .replace(
+      /\bvia ((?:[A-Z](?:\d{1,2})?)(?:\s+[A-Z](?:\d{1,2})?)*)\b/g,
+      (_, route) => `via ${route.split(/\s+/).map(identifier).join(' ')}`,
+    )
     .replace(
       /\b(\d{3})\.(\d{1,3})\b/g,
       (_, a, b) => `${number(a)} decimal ${number(b.padEnd(3, '0'))}`,
     )
     .replace(/\b(32)([RL])\b/g, (_, n, l) => `${number(n)} ${l === 'R' ? 'right' : 'left'}`)
     .replace(/\b33\b/g, 'three three')
-    .replace(/\b([A-Z])(\d{1,2})\b/g, (_, l, n) => `${letters[l] ?? l} ${number(n)}`)
-    .replace(/\b([ABCDFGTUYZ])\b/g, (l) => letters[l] ?? l)
+    .replace(/\b([A-Z]\d{1,2})\b/g, identifier)
+    .replace(/\binformation ([A-Z])\b/g, (_, l) => `information ${letters[l]}`)
 }

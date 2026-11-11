@@ -63,4 +63,9 @@ describe('pilot readback voice', () => {
     expect(result).toContain('three two right')
     expect(result).toContain('one one eight decimal eight zero zero')
   })
+  it('pronounces Quebec stand identifiers without converting ordinary pronouns/articles', () => {
+    expect(spokenReadback('A delay, I am at stand Q4, taxi via U5 Z Z8 Y Y9.')).toBe(
+      'A delay, I am at stand Quebec four, taxi via Uniform five Zulu Zulu eight Yankee Yankee nine.',
+    )
+  })
 })
