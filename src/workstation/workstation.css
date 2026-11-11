@@ -1602,3 +1602,9 @@ button:hover:not(:disabled) {
 .coordination-panel .pilot-station-help {
   font-size: 11px;
 }
+/* Map borders stay one screen pixel while the chart's viewBox zooms. */
+.target-label-box,
+.target-leader,
+.selection-ring {
+  vector-effect: non-scaling-stroke;
+}
