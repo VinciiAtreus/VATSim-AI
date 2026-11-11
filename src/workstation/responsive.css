@@ -566,3 +566,50 @@
   touch-action: none;
   user-select: none;
 }
+
+.ptt-mode {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.ptt-mode button {
+  flex: 1;
+  padding: 8px;
+}
+.ptt-mode button[aria-pressed='true'] {
+  border-color: var(--accent, #73c7ff);
+  background: #284b67;
+  color: #fff;
+}
+.speech-language {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.speech-language select {
+  flex: 1;
+  min-width: 0;
+  padding: 6px;
+  background: var(--panel, #20282d);
+  color: inherit;
+  border: 1px solid #52616a;
+}
+.speech-feedback {
+  border-left: 2px solid #e8bc5b;
+  padding-left: 8px;
+  overflow-wrap: anywhere;
+}
+.speech-results button {
+  white-space: normal;
+  text-align: left;
+  overflow-wrap: anywhere;
+  padding: 6px;
+  margin-bottom: 6px;
+  max-width: 100%;
+}
+.speech-results details button {
+  display: block;
+  width: 100%;
+}
