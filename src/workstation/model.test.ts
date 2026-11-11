@@ -1,3 +1,4 @@
+import { RUNWAYS } from '../sim/airport'
 import { describe, expect, it } from 'vitest'
 import { createSession, tick, transmit } from '../sim/engine'
 import { parseTransmission } from '../sim/parser'
@@ -37,7 +38,7 @@ describe('overhaul contracts', () => {
   it('ALT-01 clears on landing clearance, escalates inside 1.5 NM and freezes on pause', () => {
     let s = createSession()
     const a = s.aircraft.find((a) => a.operation === 'arrival')!
-    a.position.y = 715
+    a.position.y = RUNWAYS[a.runway].bottom + 100
     expect(safetyAlerts(s)[0].level).toBe('critical')
     expect(tick(s, 30)).toEqual(s)
     s = transmit(s, `${a.id}, runway 32L cleared to land`, a.frequency).session
@@ -48,15 +49,15 @@ describe('overhaul contracts', () => {
     const a = s.aircraft[0]
     a.phase = 'holding'
     a.frequency = '118.800'
-    a.position = { x: 870, y: 600 }
+    a.position = { ...RUNWAYS[a.runway].hold }
     expect(stopBarOff(s.aircraft, '32R')).toBe(false)
     const next = transmit(s, 'MAS612 runway 32R line up and wait', '118.800').session
     expect(stopBarOff(next.aircraft, '32R')).toBe(true)
-    expect(stopBarOff(tick({ ...next, running: true }, 25).aircraft, '32R')).toBe(false)
+    expect(stopBarOff(tick({ ...next, running: true }, 150).aircraft, '32R')).toBe(false)
   })
   it.each([
     'Malaysian six one two, pushback and start-up approved',
-    'Malaysian six one two, taxi to holding point Alpha One, runway three two right, via Alpha',
+    'Malaysian six one two, taxi to holding point Alpha One One, runway three two right, via Alpha',
     'Malaysian six one two, wind three two zero degrees fife knots, runway three two right, cleared for take-off',
     'Malaysian six one two, contact Lumpur Tower one one eight decimal eight',
   ])('PTT-22 parses the spoken catalogue: %s', (text) => {
@@ -91,8 +92,8 @@ describe('engine upgrade', () => {
   it('holding and continuing retains the aircraft route rather than rebuilding it', () => {
     let s = createSession('departure')
     s = transmit(s, 'MAS612 pushback approved', '121.650').session
-    s = tick({ ...s, running: true }, 35)
-    s = transmit(s, 'MAS612 taxi runway 32R via A', '121.650').session
+    s = tick({ ...s, running: true }, 150)
+    s = transmit(s, 'MAS612 taxi runway 32R via T2 T3 F1 G B9 A A11', '121.650').session
     const route = s.aircraft[0].route
     s = transmit(s, 'MAS612 hold position', '121.650').session
     const held = s.aircraft[0].position

@@ -1,6 +1,7 @@
 export type Point = { x: number; y: number }
 export type RunwayId = '32R' | '32L' | '33'
 export type Phase =
+  | 'scheduled'
   | 'parked'
   | 'pushback'
   | 'ready'
@@ -45,8 +46,48 @@ export type Aircraft = {
   pilotMode: 'scripted' | 'operator'
   motionPaused: boolean
   queuedInstruction?: { eventId: number; text: string; frequency: Frequency }
+  activationTime: number
 }
-export type EventKind = 'system' | 'controller' | 'pilot' | 'instructor' | 'operator' | 'note'
+export type Weather = { windDirection: number; windSpeed: number; qnh: number; information: string }
+export type ExerciseDefinition = {
+  id: string
+  revision: number
+  title: string
+  objective: string
+  baseScenario: 'morning' | 'departure' | 'readback'
+  weather: Weather
+  traffic: { profileId: string; callsign: string; spoken: string; releaseAt: number }[]
+  triggers: { id: string; at: number; action: 'block' | 'clear' | 'readback'; runway: RunwayId }[]
+  requireCoordination: boolean
+  automaticCoordination: boolean
+  criteria: { id: string; title: string; description: string }[]
+}
+export type Coordination = {
+  id: number
+  aircraftId: string
+  from: Frequency
+  to: Frequency
+  status: 'pending' | 'approved' | 'declined'
+  requestedAt: number
+  decidedAt?: number
+}
+export type Assessment = {
+  criterionId: string
+  rating: 'not-observed' | 'needs-review' | 'demonstrated'
+  reviewer: string
+  note: string
+  eventId: number
+  time: number
+}
+export type EventKind =
+  | 'system'
+  | 'controller'
+  | 'pilot'
+  | 'instructor'
+  | 'operator'
+  | 'note'
+  | 'coordination'
+  | 'assessment'
 export type SimEvent = {
   id: number
   time: number
@@ -60,9 +101,17 @@ export type SimEvent = {
   relatedEventId?: number
   snapshot: Aircraft[]
   blockedRunway: RunwayId | null
+  weather: Weather
+  coordination: Coordination[]
 }
 export type Session = {
-  version: 3
+  version: 4
+  simulation?: {
+    sequence: number
+    trafficEnabled: boolean
+    registry: { callsign: string; profileId: string; releaseAt: number }[]
+    nextRelease: Record<string, number>
+  }
   id: string
   scenarioId: string
   time: number
@@ -78,6 +127,11 @@ export type Session = {
   completed: number
   attempted: number
   accepted: number
+  exercise: ExerciseDefinition
+  weather: Weather
+  firedTriggers: string[]
+  coordination: Coordination[]
+  assessments: Assessment[]
 }
 export type Command =
   | { type: 'pushback'; aircraftId: string }

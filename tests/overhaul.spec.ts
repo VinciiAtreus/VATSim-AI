@@ -14,7 +14,7 @@ test('LAY-01/02, TOP-02, DP-8: desktop and stacked layouts, live UTC and persist
   ).toBeLessThan(2000)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   const strips = await page.getByLabel('Flight strips', { exact: true }).boundingBox()
-  const map = await page.getByLabel('WMKK schematic airport display').boundingBox()
+  const map = await page.getByLabel('WMKK chart-transcribed airport display').boundingBox()
   expect(strips!.x).toBeLessThan(map!.x)
   await page.getByLabel('Toggle day/night mode').click()
   await expect(page.locator('html')).toHaveAttribute('data-mode', 'day')
@@ -22,7 +22,7 @@ test('LAY-01/02, TOP-02, DP-8: desktop and stacked layouts, live UTC and persist
   await expect(page.locator('html')).toHaveAttribute('data-mode', 'day')
   await page.setViewportSize({ width: 390, height: 844 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-  const mobileMap = await page.getByLabel('WMKK schematic airport display').boundingBox()
+  const mobileMap = await page.getByLabel('WMKK chart-transcribed airport display').boundingBox()
   const mobileStrips = await page.getByLabel('Flight strips', { exact: true }).boundingBox()
   expect(mobileMap!.y).toBeLessThan(mobileStrips!.y)
 })
@@ -34,7 +34,7 @@ test('PTT-06/07/08, SIM-02: short press, TX lamps, blur cancel, and typed PTT', 
   await page.clock.pauseAt(new Date(Date.now() + 1000))
   await page.goto('/')
   await expect(page.getByLabel('Push to talk', { exact: true })).toBeDisabled()
-  await page.getByLabel('Start exercise', { exact: true }).click()
+  await page.getByLabel('Start simulation', { exact: true }).click()
   await page.getByLabel('Controller transmission').fill('MAS612, pushback approved')
   await page.keyboard.down('ControlRight')
   await expect(page.getByLabel('Push to talk', { exact: true })).toHaveAttribute(
@@ -74,10 +74,10 @@ test('PTT-09 and key map: Space leaves running, P pauses, and stuck mic cancels'
   await page.clock.install()
   await page.clock.pauseAt(new Date(Date.now() + 1000))
   await page.goto('/')
-  await page.getByLabel('Start exercise', { exact: true }).click()
+  await page.getByLabel('Start simulation', { exact: true }).click()
   await page.locator('h1').click()
   await page.keyboard.press('Space')
-  await expect(page.getByLabel('Pause exercise', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('Pause simulation', { exact: true })).toBeVisible()
   await page.keyboard.press('p')
   await expect(page.getByLabel('Push to talk', { exact: true })).toBeDisabled()
   await page.keyboard.press('p')
@@ -131,7 +131,7 @@ test('browser speech uses the shared parser and rejects low confidence without a
   const speech = page.locator('.settings-row').filter({ hasText: 'Browser speech recognition' })
   await speech.getByRole('button').click()
   await page.getByRole('button', { name: 'Back to workstation' }).click()
-  await page.getByLabel('Start exercise', { exact: true }).click()
+  await page.getByLabel('Start simulation', { exact: true }).click()
   await page.evaluate(() => {
     ;(window as unknown as Record<string, unknown>).confidence = 0.4
   })
@@ -172,7 +172,7 @@ test('latching PTT and a captured keyboard binding send only on the second press
     .getByRole('button')
     .click()
   await page.getByRole('button', { name: 'Back to workstation' }).click()
-  await page.getByLabel('Start exercise', { exact: true }).click()
+  await page.getByLabel('Start simulation', { exact: true }).click()
   await page.getByLabel('Controller transmission').fill('MAS612 pushback approved')
   await page.keyboard.press('F9')
   await page.clock.runFor(500)
@@ -204,10 +204,67 @@ test('blocked preference storage does not prevent startup or typed control', asy
   })
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'WMKK KUALA LUMPUR' })).toBeVisible()
-  await page.getByLabel('Start exercise', { exact: true }).click()
+  await page.getByLabel('Start simulation', { exact: true }).click()
   await page.getByLabel('Controller transmission').fill('MAS612 pushback approved')
   await page.getByLabel('Transmit clearance', { exact: true }).click()
   await expect(page.getByRole('button', { name: 'Select MAS612', exact: true })).toContainText(
     'PUSHBACK',
   )
+})
+
+test('PTT service errors without end allow retry and delayed results retain their original TX channel', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as any
+    w.attempt = 0
+    w.SpeechRecognition = class {
+      onresult: any
+      onerror: any
+      onend: any
+      start() {
+        w.capture = this
+        if (++w.attempt === 1) this.onerror?.({ error: 'network' })
+      }
+      stop() {}
+      abort() {}
+      finish() {
+        this.onresult?.({
+          resultIndex: 0,
+          results: [
+            { isFinal: true, 0: { transcript: 'MAS612 pushback approved', confidence: 0.95 } },
+          ],
+        })
+        this.onend?.()
+      }
+    }
+  })
+  await page.clock.install()
+  await page.clock.pauseAt(new Date(Date.now() + 1000))
+  await page.goto('/')
+  await page.getByLabel('Workstation settings').click()
+  await page
+    .locator('.settings-row')
+    .filter({ hasText: 'Browser speech recognition' })
+    .getByRole('button')
+    .click()
+  await page.getByRole('button', { name: 'Back to workstation' }).click()
+  await page.getByLabel('Start simulation', { exact: true }).click()
+  await page.keyboard.down('ControlRight')
+  await page.keyboard.up('ControlRight')
+  await expect(page.getByLabel('Push to talk', { exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  )
+  await expect(page.locator('.safety-line')).toContainText('network')
+  await page.keyboard.down('ControlRight')
+  await page.clock.runFor(500)
+  await page.keyboard.up('ControlRight')
+  await expect(page.getByLabel('Push to talk', { exact: true })).toContainText('Processing')
+  await page.getByRole('button', { name: 'Transmit on TWR 32L 118.500', exact: true }).click()
+  await page.evaluate(() => (window as any).capture.finish())
+  await expect(page.getByRole('button', { name: 'Select MAS612', exact: true })).toContainText(
+    'PUSHBACK',
+  )
+  await expect(page.locator('.command-error')).toHaveCount(0)
 })

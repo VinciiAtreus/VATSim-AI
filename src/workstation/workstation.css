@@ -1554,3 +1554,51 @@ button:hover:not(:disabled) {
     transition: none;
   }
 }
+/* Preserve chart trace scale and upright airport detail from the current dataset. */
+.surface-svg .taxiway-line {
+  stroke-width: 5;
+}
+.surface-svg .runway-centre {
+  stroke-width: 0.7;
+  stroke-dasharray: 5 6;
+}
+.surface-svg .stopbar-line {
+  stroke-width: 1.6;
+}
+.surface-svg .terminal-building {
+  stroke-width: 0.7;
+}
+.chart-label {
+  fill: var(--text-dim);
+  font-family: var(--mono);
+}
+.chart-scale {
+  position: absolute;
+  left: 12px;
+  bottom: 43px;
+  right: auto;
+  max-width: 110px;
+  color: var(--text-dim);
+  font: 10px var(--mono);
+  background: var(--map);
+}
+.surface-svg {
+  user-select: none;
+}
+.voice-button {
+  min-width: 56px;
+}
+.coordination-panel {
+  margin: 0 14px 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--panel);
+}
+.paper-ident small {
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+.coordination-panel .pilot-station-help {
+  font-size: 11px;
+}

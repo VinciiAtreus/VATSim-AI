@@ -1,0 +1,97 @@
+{
+  "dataset": "wmkk-caam-trace-0.2",
+  "retrieved": "2026-11-11",
+  "status": "manually-transcribed-professionally-unvalidated",
+  "sources": [
+    {
+      "chart": "AD 2-WMKK-2-1",
+      "title": "Aerodrome",
+      "printedDate": "2026-11-03",
+      "publication": "2026-11-03 / AMDT 04/26",
+      "url": "https://aip.caam.gov.my/aip/eAIP/2026-11-03/graphics/331501.pdf",
+      "sha256": "01de0fbb13805a053d784f6bd71501e51511bea143e79530ba14b412dcf4c43b",
+      "bytes": 734408
+    },
+    {
+      "chart": "AD 2-WMKK-2-7",
+      "title": "Terminal 1 parking",
+      "printedDate": "2026-11-03",
+      "publication": "2026-11-03 / AMDT 04/26",
+      "url": "https://aip.caam.gov.my/aip/eAIP/2026-11-03/graphics/331503.pdf",
+      "sha256": "6bf8c25bb96fe67abf4b8c5e28998f83ffd97772ac0e7ff1c7a8d5a25508f732",
+      "bytes": 497084
+    },
+    {
+      "chart": "AD 2-WMKK-2-15",
+      "title": "Terminal 2 parking",
+      "printedDate": "2026-11-03",
+      "publication": "2026-11-03 / AMDT 04/26",
+      "url": "https://aip.caam.gov.my/aip/eAIP/2026-11-03/graphics/331511.pdf",
+      "sha256": "81772f3110147d3c2e75d9f084a26b4b71a9bd35d6e72bea2f5bad870e6851d1",
+      "bytes": 586378
+    },
+    {
+      "chart": "AD 2-WMKK-2-21",
+      "title": "Ground movement",
+      "printedDate": "2026-11-03",
+      "publication": "2026-11-03 / AMDT 04/26",
+      "url": "https://aip.caam.gov.my/aip/eAIP/2026-11-03/graphics/331515.pdf",
+      "sha256": "828b9b05e415fa3ab2cc3dd5f1c5d9c97b8e83b2630fabca0bbaf3a6e9ab7247",
+      "bytes": 376644
+    },
+    {
+      "chart": "AD 2-WMKK-2-37",
+      "title": "Arrival runway 32L diagram",
+      "printedDate": "2026-11-03",
+      "publication": "2026-11-03 / AMDT 04/26",
+      "url": "https://aip.caam.gov.my/aip/eAIP/2026-11-03/graphics/331540.pdf",
+      "sha256": "b40fcf75b21869cbb36b9539a5265fc55fb09b55aeb6c8a52851ba7457201f74",
+      "bytes": 272497
+    },
+    {
+      "chart": "AD 2-WMKK-2-38",
+      "title": "Arrival runway 32L route table",
+      "printedDate": "2024-07-11",
+      "publication": "2026-11-03 / AMDT 04/26",
+      "url": "https://aip.caam.gov.my/aip/eAIP/2026-11-03/graphics/185843.pdf",
+      "sha256": "df2f6b4ecca04e01f0d6728e08d7ceec28c934b1490c01cef8964e1047e1fa0f",
+      "bytes": 57158
+    },
+    {
+      "chart": "AD 2-WMKK-2-55",
+      "title": "Departure runway 32R diagram",
+      "printedDate": "2026-11-03",
+      "publication": "2026-11-03 / AMDT 04/26",
+      "url": "https://aip.caam.gov.my/aip/eAIP/2026-11-03/graphics/331549.pdf",
+      "sha256": "64f80f1853004919a6c86912633a8a10e08c17b5b0e501d44867e07fb7dd2dfa",
+      "bytes": 237237
+    },
+    {
+      "chart": "AD 2-WMKK-2-56",
+      "title": "Departure runway 32R route table",
+      "printedDate": "2024-07-11",
+      "publication": "2026-11-03 / AMDT 04/26",
+      "url": "https://aip.caam.gov.my/aip/eAIP/2026-11-03/graphics/185854.pdf",
+      "sha256": "ef0856fc79b4e7a4da0199c26e213c0fd5b499386daafa601160f8dbf307ed04",
+      "bytes": 98389
+    },
+    {
+      "chart": "AD 2-WMKK-2-57",
+      "title": "Departure runway 33 diagram",
+      "printedDate": "2026-11-03",
+      "publication": "2026-11-03 / AMDT 04/26",
+      "url": "https://aip.caam.gov.my/aip/eAIP/2026-11-03/graphics/331672.pdf",
+      "sha256": "ad29d4fa7b6371e9afb776e778efdbca11a3ddf1d66c45e3e0ded0758d09c840",
+      "bytes": 277207
+    },
+    {
+      "chart": "AD 2-WMKK-2-58",
+      "title": "Departure runway 33 route table",
+      "printedDate": "2024-10-08",
+      "publication": "2026-11-03 / AMDT 04/26",
+      "url": "https://aip.caam.gov.my/aip/eAIP/2026-11-03/graphics/269085.pdf",
+      "sha256": "909c52bf1d6664a547ee1d354dd68d6b4b21ff3aaba52fd5bf881d6e3356f781",
+      "bytes": 66478
+    }
+  ]
+}

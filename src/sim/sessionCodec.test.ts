@@ -1,3 +1,4 @@
+import { STANDS } from './geometry'
 import { describe, expect, it } from 'vitest'
 import {
   addObservation,
@@ -82,8 +83,8 @@ describe('session interchange', () => {
   it('round-trips current state, historical snapshots, and pending discrepancies', () => {
     let s = createSession('readback')
     s = transmit(s, 'MAS612, pushback approved', '121.650').session
-    s = tick({ ...s, running: true }, 35)
-    s = transmit(s, 'MAS612, taxi runway 32R via A', '121.650').session
+    s = tick({ ...s, running: true }, 150)
+    s = transmit(s, 'MAS612, taxi runway 32R via T2 T3 F1 G B9 A A11', '121.650').session
     const restored = parseSessionFile(JSON.stringify(sessionExport(s)))
     expect(restored.migrated).toBe(false)
     expect(restored.session).toEqual({ ...s, running: false })
@@ -102,7 +103,7 @@ describe('session interchange', () => {
     delete a.landingCleared
     const restored = decodeSession(data)
     expect(restored.migrated).toBe(true)
-    expect(restored.session.version).toBe(3)
+    expect(restored.session.version).toBe(4)
     expect(restored.session.running).toBe(false)
     expect(restored.session.aircraft.find((a) => a.id === 'MAS1134')).toMatchObject({
       phase: 'final',
@@ -116,8 +117,8 @@ describe('session interchange', () => {
     expect(fork.id).not.toBe(s.id)
     fork.aircraft[0].position.x = 999
     fork.events[0].snapshot[0].position.x = 999
-    expect(s.aircraft[0].position.x).toBe(770)
-    expect(s.events[0].snapshot[0].position.x).toBe(770)
+    expect(s.aircraft[0].position.x).toBe(STANDS.B6.x)
+    expect(s.events[0].snapshot[0].position.x).toBe(STANDS.B6.x)
   })
   it.each([
     [

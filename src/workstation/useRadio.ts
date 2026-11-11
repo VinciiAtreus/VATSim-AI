@@ -20,7 +20,8 @@ export function useRadio(options: {
   enabled: boolean
   busy: boolean
   text: string
-  transmit: (text: string) => void
+  transmit: (text: string, channel: string) => void
+  channel: string
   notify: (message: string) => void
   voice: boolean
   binding: string
@@ -33,6 +34,7 @@ export function useRadio(options: {
   const [capturedBinding, setCapturedBinding] = useState<string | null>(null)
   const opts = useRef(options)
   opts.current = options
+  const channel = useRef(options.channel)
   const down = useRef(false)
   const startTime = useRef(0)
   const guard = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -60,6 +62,7 @@ export function useRadio(options: {
       o.notify('Recognition processing — please wait.')
       return
     }
+    channel.current = o.channel
     down.current = true
     startTime.current = performance.now()
     setTransmitting(true)
@@ -86,18 +89,29 @@ export function useRadio(options: {
       let confidence = 1
       let cancelled = false
       recognition.onresult = (event) => {
+        if (recognizer.current !== recognition) return
         let interim = ''
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const result = event.results[i]
           if (result.isFinal) {
             final += ` ${result[0].transcript}`
-            confidence = Math.min(confidence, result[0].confidence)
+            confidence = Math.min(
+              confidence,
+              Number.isFinite(result[0].confidence) ? result[0].confidence : 0,
+            )
           } else interim += result[0].transcript
         }
         setRecognised((final + interim).trim())
       }
       recognition.onerror = (event) => {
+        if (recognizer.current !== recognition) return
         cancelled = true
+        recognizer.current = null
+        down.current = false
+        setTransmitting(false)
+        setProcessing(false)
+        clearTimeout(guard.current)
+        recognition.abort()
         o.notify(
           event.error === 'not-allowed'
             ? 'Microphone permission denied. Allow microphone access in Chrome or use typed PTT.'
@@ -105,6 +119,7 @@ export function useRadio(options: {
         )
       }
       recognition.onend = () => {
+        if (recognizer.current !== recognition) return
         recognizer.current = null
         setProcessing(false)
         if (down.current) {
@@ -124,7 +139,7 @@ export function useRadio(options: {
           opts.current.notify('Say again — recognition confidence below 0.6. Nothing applied.')
           return
         }
-        if (opts.current.enabled) opts.current.transmit(final.trim())
+        if (opts.current.enabled) opts.current.transmit(final.trim(), channel.current)
       }
       // Abort is used for blur/hidden/short presses so partial speech cannot apply later.
       const abort = recognition.abort.bind(recognition)
@@ -144,7 +159,9 @@ export function useRadio(options: {
   const release = useCallback((cancel = false) => {
     if (!down.current) {
       if (cancel) {
-        recognizer.current?.abort()
+        const current = recognizer.current
+        recognizer.current = null
+        current?.abort()
         setProcessing(false)
       }
       return
@@ -154,13 +171,17 @@ export function useRadio(options: {
     clearTimeout(guard.current)
     const tooShort = performance.now() - startTime.current < 350
     if (recognizer.current) {
-      if (cancel || tooShort) recognizer.current.abort()
-      else {
+      if (cancel || tooShort) {
+        const current = recognizer.current
+        recognizer.current = null
+        setProcessing(false)
+        current.abort()
+      } else {
         setProcessing(true)
         recognizer.current.stop()
       }
     } else if (!cancel && !tooShort) {
-      if (opts.current.text.trim()) opts.current.transmit(opts.current.text)
+      if (opts.current.text.trim()) opts.current.transmit(opts.current.text, channel.current)
       else
         opts.current.notify(
           'Typed PTT: enter a clearance in Free text, then hold and release. Enable browser speech in settings to speak.',

@@ -1,3 +1,4 @@
+import { MAP_ROTATION } from '../sim/geometry'
 import type { Aircraft, Point } from '../sim/types'
 export type MapLabel = {
   id: string
@@ -8,10 +9,10 @@ export type MapLabel = {
   compact: boolean
 }
 export function rotatePoint(p: Point): Point {
-  const radians = (-26 * Math.PI) / 180
+  const radians = (MAP_ROTATION * Math.PI) / 180
   return {
-    x: 600 + (p.x - 600) * Math.cos(radians) - (p.y - 380) * Math.sin(radians),
-    y: 380 + (p.x - 600) * Math.sin(radians) + (p.y - 380) * Math.cos(radians),
+    x: 470 + (p.x - 470) * Math.cos(radians) - (p.y - 380) * Math.sin(radians),
+    y: 380 + (p.x - 470) * Math.sin(radians) + (p.y - 380) * Math.cos(radians),
   }
 }
 // Work in screen-aligned SVG coordinates; expanded bounds include the full text.
@@ -27,7 +28,7 @@ export function placeLabels(aircraft: Aircraft[], scale = 1): MapLabel[] {
     )
   for (const a of aircraft) {
     const p = rotatePoint(a.position)
-    const width = 142 * scale,
+    const width = 122 * scale,
       height = 40 * scale
     const offsets = [
       [18, -44],

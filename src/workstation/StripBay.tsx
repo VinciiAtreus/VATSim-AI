@@ -12,7 +12,7 @@ export default function StripBay({
   onSelect: (id: string) => void
 }) {
   const [search, setSearch] = useState('')
-  const active = aircraft.filter((a) => a.phase !== 'complete')
+  const active = aircraft.filter((a) => !['complete', 'scheduled'].includes(a.phase))
   const visible = active.filter((a) =>
     `${a.id} ${a.type} ${a.stand}`.toLowerCase().includes(search.toLowerCase()),
   )
@@ -40,7 +40,7 @@ export default function StripBay({
               <header>
                 <strong>{bay}</strong>
                 <span>
-                  {bay === 'RUNWAY' ? '32R  33  32L' : bay === 'HOLDING POINT' ? 'A1  Y1' : ''}{' '}
+                  {bay === 'RUNWAY' ? '32R  33  32L' : bay === 'HOLDING POINT' ? 'A11  Y9' : ''}{' '}
                   <b>{traffic.length}</b>
                 </span>
               </header>
@@ -56,7 +56,9 @@ export default function StripBay({
                   >
                     <div className="paper-ident">
                       <strong>{a.id}</strong>
-                      <small>A{squawk(a)}</small>
+                      <small>
+                        A{squawk(a)} · {a.frequency}
+                      </small>
                     </div>
                     <div className="paper-details">
                       <div>

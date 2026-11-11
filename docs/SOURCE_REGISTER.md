@@ -1,8 +1,10 @@
 # WMKK source and validation register
 
-Dataset: `wmkk-schematic-0.1`
+Dataset: `wmkk-caam-trace-0.2`
 
-**Status: illustrative and unverified.** Coordinates in `src/sim/airport.ts` are display-space demonstration coordinates, not georeferenced survey data. Stand labels and connectivity have not been checked against airport charts. The ground frequency coverage and demonstration routes must not be treated as validated control responsibilities.
+**Status: chart-transcribed, professionally unvalidated.** Airport geometry and connected movement now share a manually traced dataset. See [WMKK_GEOMETRY.md](WMKK_GEOMETRY.md) for registration, supported routes, compatibility and limitations, and [WMKK_CHART_SOURCES.json](WMKK_CHART_SOURCES.json) for retrieved chart provenance and hashes. November 2026 charts were actually retrieved and inspected. This does not establish operational applicability or approval.
+
+The entries below are the earlier reference register; their outstanding procedural reviews remain open.
 
 ## Sources located
 
@@ -19,25 +21,25 @@ Dataset: `wmkk-schematic-0.1`
 
 ## Data items
 
-| Item                       | Prototype representation                   | Required replacement or review                                                      |
-| -------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------- |
-| Runway identities          | 14L/32R, 14R/32L, 15/33                    | Review against effective chart and configuration                                    |
-| Tower frequencies          | Reference values 118.800, 118.500, 119.800 | Confirm effective values, usage, and handoff responsibilities                       |
-| Ground frequencies         | Small demonstration subset                 | Import reviewed sector coverage and transfer rules                                  |
-| Taxi geometry and routes   | Invented display graph A/C/Z               | Georeferenced source, route restrictions, holding positions, aircraft compatibility |
-| Stands                     | B6, B8, B10, Q4 used as labels             | Validate existence, geometry, dimensions, and movement constraints                  |
-| Aircraft performance       | Simplified display-space speeds            | Reviewed aircraft model and operational tolerances                                  |
-| Wind and QNH               | Fixed fictional exercise weather           | Consistent scenario data and applicable procedures                                  |
-| Unanswered calls           | 90-second coaching observation             | Instructor-defined exercise criterion, not asserted CAAM limit                      |
-| Runway occupancy           | Coarse phase flag and injected obstruction | Validated protected areas, complete-aircraft clearance, applicable rules            |
-| Minima and wake separation | Not implemented                            | Reviewed rules by aircraft category, configuration, and conditions                  |
-| Local coordination         | Not implemented                            | Authorised local procedures and training lead review                                |
+| Item                       | Prototype representation                         | Required replacement or review                                                      |
+| -------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| Runway identities          | 14L/32R, 14R/32L, 15/33                          | Review against effective chart and configuration                                    |
+| Tower frequencies          | Reference values 118.800, 118.500, 119.800       | Confirm effective values, usage, and handoff responsibilities                       |
+| Ground frequencies         | Small demonstration subset                       | Import reviewed sector coverage and transfer rules                                  |
+| Taxi geometry and routes   | Bounded CAAM chart-transcribed paths             | Georeferenced source, route restrictions, holding positions, aircraft compatibility |
+| Stands                     | Four routed profiles plus traced parking context | Validate existence, geometry, dimensions, and movement constraints                  |
+| Aircraft performance       | Constant-speed metric kinematics                 | Reviewed aircraft model and operational tolerances                                  |
+| Wind and QNH               | Fixed fictional exercise weather                 | Consistent scenario data and applicable procedures                                  |
+| Unanswered calls           | 90-second coaching observation                   | Instructor-defined exercise criterion, not asserted CAAM limit                      |
+| Runway occupancy           | Coarse phase flag and injected obstruction       | Validated protected areas, complete-aircraft clearance, applicable rules            |
+| Minima and wake separation | Not implemented                                  | Reviewed rules by aircraft category, configuration, and conditions                  |
+| Local coordination         | Not implemented                                  | Authorised local procedures and training lead review                                |
 
 ## Rule record contract
 
 Future operational rules must include: `ruleId`, `sourceUrl`, `sourceSection`, `edition`, `effectiveFrom`, `effectiveUntil`, `applicability`, `interpretation`, `reviewer`, `reviewedAt`, `validationStatus`, `acceptanceTestIds`, and `changeHistory`.
 
-Statuses: proposed → source-checked → SME-reviewed → scenario-tested → released. The current demonstration graph remains outside that operational release pipeline.
+Statuses: proposed → source-checked → SME-reviewed → scenario-tested → released. The current chart-transcribed graph remains outside that operational release pipeline.
 
 No reviewer or approval is recorded until a real review occurs. Public accessibility does not itself establish redistribution rights for charts or other source assets.
 

@@ -1,7 +1,7 @@
+import { HOLD_NAMES, METRES_PER_UNIT } from '../sim/geometry'
 import type { Aircraft, RunwayId, Session } from '../sim/types'
 import { RUNWAYS } from '../sim/airport'
-export const holdingPoint = (runway: RunwayId) =>
-  runway === '33' ? 'Y1' : runway === '32R' ? 'A1' : 'C1'
+export const holdingPoint = (runway: RunwayId) => HOLD_NAMES[runway]
 export const squawk = (a: Aircraft) =>
   ({ MAS612: '2341', MXD124: '2342', AXM518: '2343', MAS1134: '4512' })[a.id] ?? '2000'
 export const rfl = (a: Aircraft) =>
@@ -25,7 +25,7 @@ export function bayFor(a: Aircraft): string {
 }
 // Schematic approach units: 25 units represent the 0.5 NM exercise decision point.
 export const distanceNm = (a: Aircraft) =>
-  Math.max(0, (a.position.y - RUNWAYS[a.runway].bottom) / 50)
+  Math.max(0, ((a.position.y - RUNWAYS[a.runway].bottom) * METRES_PER_UNIT) / 1852)
 export const stopBarOff = (aircraft: Aircraft[], runway: RunwayId) =>
   aircraft.some((a) => a.runway === runway && a.phase === 'lining-up')
 export type Alert = { id: string; text: string; level: 'caution' | 'critical'; aircraftId?: string }

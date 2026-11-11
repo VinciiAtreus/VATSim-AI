@@ -1,3 +1,12 @@
+import { preferredVoice, spokenReadback } from './sim/readback'
+import { createSimulation, enableContinuous } from './sim/engine'
+import { ARRIVAL_ROUTE } from './sim/geometry'
+import { downloadArtifact } from './components/ExerciseBuilder'
+import CoordinationPanel, { CoordinationDesk } from './components/CoordinationPanel'
+import WeatherPanel from './components/WeatherPanel'
+import DataReadiness from './components/DataReadiness'
+import { useVoiceDraft } from './hooks/useVoiceDraft'
+import { radioCsv, sessionReport } from './sim/reports'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Activity,
@@ -17,6 +26,8 @@ import {
   Keyboard,
   MessageSquare,
   Plane,
+  Pause,
+  Play,
   Radio,
   RotateCcw,
   Route,
@@ -56,10 +67,12 @@ import {
 } from './sim/engine'
 import type { Aircraft, Frequency, RunwayId, Session } from './sim/types'
 
-type Modal = 'scenarios' | 'reference' | 'debrief' | 'settings' | 'sessions' | 'restore' | null
+type Modal =
+  'simulation' | 'scenarios' | 'reference' | 'debrief' | 'settings' | 'sessions' | 'restore' | null
 type Action = { label: string; text: string; primary?: boolean }
 
 function actionsFor(a: Aircraft): Action[] {
+  if (a.phase === 'scheduled') return []
   const r = RUNWAYS[a.runway]
   const command = (text: string) => `${a.id}, ${text}`
   if (a.discrepancy)
@@ -136,7 +149,11 @@ function actionsFor(a: Aircraft): Action[] {
     ]
   if (a.phase === 'vacated')
     return [
-      { label: 'Taxi to stand', text: command(`taxi to stand ${a.stand} via C`), primary: true },
+      {
+        label: 'Taxi to stand',
+        text: command(`taxi to stand ${a.stand} via ${ARRIVAL_ROUTE}`),
+        primary: true,
+      },
     ]
   return a.phase === 'complete' ? [] : [{ label: 'Standby', text: command('standby') }]
 }
@@ -172,17 +189,7 @@ export default function App() {
   const [utc, setUtc] = useState(() => new Date())
   const [rx, setRx] = useState<Frequency[]>(RADIOS.map((r) => r.frequency))
   const [busyFrequency, setBusyFrequency] = useState<Frequency | null>(null)
-  const [weather, setWeather] = useState(() => {
-    try {
-      return JSON.parse(readPreference('wmkk-weather') || '') as {
-        wind: string
-        qnh: string
-        atis: number
-      }
-    } catch {
-      return { wind: '320/05', qnh: '1012', atis: 0 }
-    }
-  })
+  const weather = session.weather
   useEffect(() => {
     const timer = window.setInterval(() => setUtc(new Date()), 1000)
     return () => clearInterval(timer)
@@ -197,19 +204,69 @@ export default function App() {
     writePreference('wmkk-voice', String(voiceInput))
     writePreference('wmkk-ptt', pttBinding)
     writePreference('wmkk-phrase', String(phraseOnly))
-    writePreference('wmkk-weather', JSON.stringify(weather))
   }, [audio, voiceInput, pttBinding, phraseOnly, weather, latch])
   const [allFrequencies, setAllFrequencies] = useState(false)
   const [replayIndex, setReplayIndex] = useState<number | null>(null)
   const [reviewFilter, setReviewFilter] = useState<
     'all' | 'radio' | 'interventions' | 'observations'
   >('all')
+  const [replayPlaying, setReplayPlaying] = useState(false)
+  const [replayRate, setReplayRate] = useState(1)
+  const [voiceRate, setVoiceRate] = useState(0.95)
+  const [readbackVoices, setReadbackVoices] = useState<SpeechSynthesisVoice[]>([])
+  const [voiceURI, setVoiceURI] = useState(() => {
+    try {
+      return localStorage.getItem('vatsim-ai.readback-voice') ?? ''
+    } catch {
+      return ''
+    }
+  })
+  useEffect(() => {
+    if (!('speechSynthesis' in window)) return
+    const load = () =>
+      setReadbackVoices(window.speechSynthesis.getVoices().filter((v) => /^en\b/i.test(v.lang)))
+    load()
+    window.speechSynthesis.addEventListener('voiceschanged', load)
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', load)
+  }, [])
+  const readbackVoice =
+    readbackVoices.find((v) => v.voiceURI === voiceURI) ?? preferredVoice(readbackVoices)
+  function speakReadback(text: string, preview = false) {
+    if (!('speechSynthesis' in window)) return
+    if (preview) window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(spokenReadback(text))
+    if (readbackVoice) utterance.voice = readbackVoice
+    utterance.lang = readbackVoice?.lang ?? 'en-GB'
+    utterance.rate = voiceRate
+    utterance.pitch = 1
+    window.speechSynthesis.speak(utterance)
+  }
+
   const [confirmScenario, setConfirmScenario] = useState<string | null>(null)
   const commandInput = useRef<HTMLInputElement>(null)
   const transcriptEnd = useRef<HTMLDivElement>(null)
   const lastSpoken = useRef(0)
   const lastBusyEvent = useRef('')
   const busyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const voice = useVoiceDraft(
+    ready && session.running && replayIndex === null && modal === null,
+    (text) => {
+      if (!stateRef.current.running || document.hidden || replayIndex !== null || modal) return
+      setCommand(text)
+      setCommandError('')
+      update((s) => record(s, 'system', `Speech draft prepared for controller review: ${text}`))
+      setToast('Voice draft ready. Check callsign, runway, route and frequency, then transmit.')
+    },
+  )
+  useEffect(() => {
+    if (!replayPlaying || replayIndex === null || modal) return
+    if (replayIndex >= session.events.length - 1) {
+      setReplayPlaying(false)
+      return
+    }
+    const id = window.setTimeout(() => setReplayIndex(replayIndex + 1), 1000 / replayRate)
+    return () => window.clearTimeout(id)
+  }, [replayPlaying, replayIndex, replayRate, session.events.length, modal])
   const pause = useCallback(() => {
     if (!ready) return
     update((s) =>
@@ -254,24 +311,15 @@ export default function App() {
     transcriptEnd.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [session.events.length, frequency, allFrequencies])
   useEffect(() => {
-    const latest = session.events.filter((e) => e.kind === 'pilot').at(-1)
-    if (!latest || latest.id <= lastSpoken.current) return
-    lastSpoken.current = latest.id
-    if (audio && session.running && rx.includes(latest.frequency!) && 'speechSynthesis' in window) {
-      const voice = new SpeechSynthesisUtterance(
-        latest.text
-          .replace(/32R/g, 'three two right')
-          .replace(/32L/g, 'three two left')
-          .replace(/\b33\b/g, 'three three'),
-      )
-      voice.lang = 'en-GB'
-      voice.rate = 1
-      const voices = window.speechSynthesis.getVoices().filter((v) => v.lang.startsWith('en'))
-      const aircraftIndex = session.aircraft.findIndex((a) => a.id === latest.aircraftId)
-      if (voices.length) voice.voice = voices[Math.max(0, aircraftIndex) % voices.length]
-      window.speechSynthesis.speak(voice)
-    }
-  }, [session.events, audio, rx, session.running])
+    const pending = session.events.filter((e) => e.kind === 'pilot' && e.id > lastSpoken.current)
+    if (!pending.length) return
+    lastSpoken.current = pending.at(-1)!.id
+    if (audio && session.running)
+      for (const event of pending) if (rx.includes(event.frequency!)) speakReadback(event.text)
+  }, [session.events, audio, voiceRate, readbackVoice, session.running, rx])
+  useEffect(() => {
+    if (!session.running) window.speechSynthesis?.cancel()
+  }, [session.running])
   useEffect(() => {
     const handle = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -284,6 +332,7 @@ export default function App() {
           'input, textarea, select, button, a[href], [contenteditable]',
         ) ||
         modal ||
+        e.code === pttBinding ||
         e.ctrlKey ||
         e.metaKey ||
         e.altKey
@@ -313,14 +362,21 @@ export default function App() {
     }
     window.addEventListener('keydown', handle)
     return () => window.removeEventListener('keydown', handle)
-  }, [pause, modal, replayIndex, update, selectedId])
+  }, [pause, modal, replayIndex, update, selectedId, pttBinding])
 
-  const scenario = SCENARIOS.find((s) => s.id === session.scenarioId)!
+  const scenario = {
+    ...(SCENARIOS.find((s) => s.id === session.scenarioId) ?? {
+      code: 'WMKK–CUSTOM',
+      category: 'LOCAL LESSON',
+    }),
+    title: session.exercise.title,
+    objective: session.exercise.objective,
+  }
   const displayedAircraft =
     replayIndex === null ? session.aircraft : session.events[replayIndex].snapshot
   const selected = displayedAircraft.find((a) => a.id === selectedId) ?? displayedAircraft[0]
   const actions = actionsFor(selected)
-  const active = displayedAircraft.filter((a) => a.phase !== 'complete')
+  const active = displayedAircraft.filter((a) => !['complete', 'scheduled'].includes(a.phase))
   const waiting = active.filter((a) => a.pending).length
   const issues = session.events.filter(
     (e) =>
@@ -362,7 +418,11 @@ export default function App() {
     setCommandError('')
     commandInput.current?.focus()
   }
-  function send(text = command) {
+  function send(text = command, transmitFrequency = frequency) {
+    if (voice.listening) {
+      setCommandError('Stop voice capture and review the draft before transmitting.')
+      return
+    }
     if (!ready) {
       setCommandError('Wait for the saved exercise to finish loading.')
       return
@@ -375,7 +435,7 @@ export default function App() {
       setCommandError('Start or resume the exercise before transmitting.')
       return
     }
-    const result = transmit(stateRef.current, text, frequency)
+    const result = transmit(stateRef.current, text, transmitFrequency)
     update(() => result.session)
     if (result.error) setCommandError(result.error)
     else {
@@ -385,10 +445,11 @@ export default function App() {
     commandInput.current?.focus()
   }
   const radio = useRadio({
-    enabled: ready && session.running && replayIndex === null && !modal,
+    enabled: ready && session.running && replayIndex === null && !modal && !voice.listening,
     busy: busyFrequency === frequency,
     text: command,
-    transmit: send,
+    transmit: (text, channel) => send(text, channel as Frequency),
+    channel: frequency,
     notify: setToast,
     voice: voiceInput,
     binding: pttBinding,
@@ -448,7 +509,7 @@ export default function App() {
     await saveNow()
     window.speechSynthesis?.cancel()
     lastSpoken.current = 0
-    const next = createSession(id)
+    const next = enableContinuous(createSession(id))
     update(() => next)
     setSelectedId('MAS612')
     setFrequency('121.650')
@@ -551,6 +612,7 @@ export default function App() {
   function replay(index: number) {
     update((s) => ({ ...s, running: false }))
     setReplayIndex(index)
+    setReplayPlaying(false)
     setModal(null)
     setCommandError('')
   }
@@ -580,9 +642,13 @@ export default function App() {
           </div>
           <div className="weather-block">
             <span>ATIS</span>
-            <strong className="atis-letter">{String.fromCharCode(65 + (weather.atis % 26))}</strong>
+            <strong className="atis-letter">{weather.information}</strong>
             <label>
-              WIND<b>{weather.wind}</b>
+              WIND
+              <b>
+                {String(weather.windDirection).padStart(3, '0')}/
+                {String(weather.windSpeed).padStart(2, '0')}
+              </b>
             </label>
             <label>
               QNH<b>{weather.qnh}</b>
@@ -604,6 +670,12 @@ export default function App() {
           </div>
           <div className="equipment-tools">
             <button
+              aria-label={audio ? 'Disable pilot readback audio' : 'Enable pilot readback audio'}
+              onClick={toggleAudio}
+            >
+              {audio ? <Volume2 size={16} /> : <VolumeX size={16} />}
+            </button>
+            <button
               onClick={() => setMode(mode === 'night' ? 'day' : 'night')}
               aria-label="Toggle day/night mode"
             >
@@ -621,15 +693,18 @@ export default function App() {
           </div>
           <div className="simulator-corner" aria-label="Simulator controls">
             <span>Simulator</span>
+            <button aria-label="Simulation setup" onClick={() => setModal('simulation')}>
+              Setup
+            </button>
             <button
               onClick={pause}
               disabled={!ready || replayIndex !== null}
               aria-label={
                 session.running
-                  ? 'Pause exercise'
+                  ? 'Pause simulation'
                   : session.time
-                    ? 'Resume exercise'
-                    : 'Start exercise'
+                    ? 'Resume simulation'
+                    : 'Start simulation'
               }
             >
               {session.running ? 'Pause' : session.time ? 'Resume' : 'Run'}
@@ -643,14 +718,7 @@ export default function App() {
                 {speed}×
               </button>
             ))}
-            <button
-              onClick={() => {
-                setConfirmScenario(session.scenarioId)
-                setModal('scenarios')
-              }}
-            >
-              Reset
-            </button>
+            <button onClick={() => setModal('simulation')}>Reset</button>
             <span className="sim-elapsed">
               T+{formatTime(session.time)} · MOV {session.completed}
             </span>
@@ -737,7 +805,8 @@ export default function App() {
                   : session.events[replayIndex].blockedRunway
               }
               replay={replayIndex !== null}
-              wind={weather.wind}
+              weather={replayEvent?.weather ?? session.weather}
+              wind={`${String(weather.windDirection).padStart(3, '0')}/${String(weather.windSpeed).padStart(2, '0')}`}
               criticalAircraft={alerts
                 .filter((a) => a.level === 'critical' && a.aircraftId)
                 .map((a) => a.aircraftId!)}
@@ -745,6 +814,27 @@ export default function App() {
             {replayIndex !== null && (
               <div className="replay-bar">
                 <History size={15} />
+                <span>
+                  EVENT {replayIndex + 1}/{session.events.length}
+                </span>
+                <button
+                  className="text-button"
+                  aria-label={replayPlaying ? 'Pause replay' : 'Play replay'}
+                  onClick={() => setReplayPlaying(!replayPlaying)}
+                >
+                  {replayPlaying ? <Pause size={14} /> : <Play size={14} />}
+                </button>
+                <select
+                  aria-label="Replay events per second"
+                  value={replayRate}
+                  onChange={(e) => setReplayRate(Number(e.target.value))}
+                >
+                  {[1, 2, 4].map((rate) => (
+                    <option key={rate} value={rate}>
+                      {rate} event{rate > 1 ? 's' : ''}/s
+                    </option>
+                  ))}
+                </select>
                 <span>
                   EVENT {replayIndex + 1}/{session.events.length}
                 </span>
@@ -799,7 +889,7 @@ export default function App() {
                       <time>{e.utc ? utcTime(e.utc) : formatTime(e.time)}</time>
                       <span className="transcript-speaker">
                         {e.kind === 'controller'
-                          ? frequency.startsWith('121')
+                          ? RADIOS.find((r) => r.frequency === e.frequency)?.short.startsWith('GND')
                             ? 'GND'
                             : 'TWR'
                           : e.aircraftId}
@@ -867,14 +957,45 @@ export default function App() {
                       disabled={replayIndex !== null || !ready}
                     />
                     <button
+                      type="button"
+                      className="voice-button"
+                      aria-label={voice.listening ? 'Stop voice capture' : 'Dictate instruction'}
+                      disabled={
+                        !ready || !session.running || replayIndex !== null || radio.transmitting
+                      }
+                      onClick={voice.toggle}
+                    >
+                      {voice.listening ? 'Stop' : 'Dictate'}
+                    </button>
+                    <button
                       type="submit"
                       aria-label="Transmit clearance"
-                      disabled={!command.trim() || replayIndex !== null || !ready}
+                      disabled={
+                        !command.trim() || replayIndex !== null || !ready || voice.listening
+                      }
                     >
                       <span>Transmit</span>
                       <Send size={15} />
                     </button>
                   </form>
+                  {voice.error && (
+                    <p role="alert" className="voice-error">
+                      {voice.error}
+                      <button
+                        type="button"
+                        className="text-button"
+                        disabled={!ready || !session.running || replayIndex !== null}
+                        onClick={voice.toggle}
+                      >
+                        Retry voice capture
+                      </button>
+                    </p>
+                  )}
+                  {voice.listening && (
+                    <p role="status" className="voice-status">
+                      Listening… stop capture when finished. Review the draft before transmitting.
+                    </p>
+                  )}
                   {commandError ? (
                     <p className="command-error" role="alert">
                       <TriangleAlert size={12} />
@@ -907,7 +1028,7 @@ export default function App() {
                 onClick={() => setPanel('instructor')}
               >
                 <ShieldCheck size={15} />
-                Instructor
+                Operations
                 {issues.length > 0 && <span className="issue-count">{issues.length}</span>}
               </button>
             </div>
@@ -919,7 +1040,7 @@ export default function App() {
                     <span>{selected.operation === 'departure' ? 'OUTBOUND' : 'INBOUND'}</span>
                   </div>
                   <p>
-                    {selected.spoken} · {selected.type}/{selected.wake}
+                    <span>{selected.spoken}</span> · {selected.type}/{selected.wake}
                   </p>
                   <dl className="selected-data">
                     {[
@@ -1015,6 +1136,14 @@ export default function App() {
                     </p>
                   )}
                 </div>
+                <CoordinationPanel
+                  key={`${session.id}-${selected.id}`}
+                  aircraft={selected}
+                  items={replayEvent?.coordination ?? session.coordination}
+                  required={session.exercise.requireCoordination}
+                  disabled={!ready || !session.running || replayIndex !== null}
+                  act={act}
+                />
                 <section className="ptt-equipment">
                   <h3>Push to talk</h3>
                   <button
@@ -1133,7 +1262,7 @@ export default function App() {
               <div className="instructor-content">
                 <div className="instructor-intro">
                   <span className="eyebrow">EXERCISE DIRECTOR</span>
-                  <h2>Instructor station</h2>
+                  <h2>Operations station</h2>
                   <p>Controlled events for procedural development and debrief.</p>
                   <p>Local controls share this workstation; no separate instructor login.</p>
                 </div>
@@ -1142,6 +1271,17 @@ export default function App() {
                   aircraft={selected}
                   running={session.running}
                   disabled={replayIndex !== null || !ready}
+                  act={act}
+                />
+                <WeatherPanel
+                  key={`weather-${session.id}`}
+                  weather={session.weather}
+                  disabled={!ready || replayIndex !== null}
+                  act={act}
+                />
+                <CoordinationDesk
+                  items={session.coordination}
+                  disabled={!ready || !session.running || replayIndex !== null}
                   act={act}
                 />
                 <div className="instructor-control">
@@ -1322,7 +1462,7 @@ export default function App() {
             <span className="eyebrow">
               {SCENARIOS.find((s) => s.id === pendingRestore.session.scenarioId)?.code}
             </span>
-            <h3>{SCENARIOS.find((s) => s.id === pendingRestore.session.scenarioId)?.title}</h3>
+            <h3>{pendingRestore.session.exercise.title}</h3>
             <dl>
               <div>
                 <dt>Source</dt>
@@ -1441,6 +1581,63 @@ export default function App() {
               </button>
             </div>
           )}
+        </ModalShell>
+      )}
+      {modal === 'simulation' && (
+        <ModalShell
+          title="WMKK simulation"
+          eyebrow="CONTINUOUS AIRPORT OPERATIONS"
+          onClose={() => setModal(null)}
+        >
+          <p>
+            Continuous fictional arrivals and departures on the supported WMKK chart routes. No
+            lesson objectives, scoring or completion screen. Traffic uses four concurrent
+            stand/runway profiles; this is not live VATSIM traffic or a complete airport traffic
+            model.
+          </p>
+          <label className="observation-priority">
+            Automatic traffic
+            <input
+              type="checkbox"
+              aria-label="Automatic traffic"
+              checked={session.simulation?.trafficEnabled ?? false}
+              disabled={!session.simulation}
+              onChange={(e) =>
+                update((s) => ({
+                  ...s,
+                  simulation: s.simulation
+                    ? { ...s.simulation, trafficEnabled: e.target.checked }
+                    : undefined,
+                }))
+              }
+            />
+          </label>
+          <p>
+            Completed traffic slots replenish after 90 seconds for departures and 120 seconds for
+            arrivals. Active aircraft remain under your control when automatic traffic is paused.
+          </p>
+          <button
+            className="primary-button"
+            onClick={async () => {
+              if (!(await saveNow())) {
+                setToast('Save or export the current session before replacing it.')
+                return
+              }
+              window.speechSynthesis?.cancel()
+              lastSpoken.current = 0
+              const next = createSimulation()
+              update(() => next)
+              setSelectedId(next.aircraft[0].id)
+              setFrequency(next.aircraft[0].frequency)
+              setReplayIndex(null)
+              setReplayPlaying(false)
+              setCommandError('')
+              setCommand('')
+              setModal(null)
+            }}
+          >
+            New simulation
+          </button>
         </ModalShell>
       )}
       {modal === 'reference' && (
@@ -1603,6 +1800,22 @@ export default function App() {
               <SkipBack size={15} />
               Review from beginning
             </button>
+            <button
+              className="secondary-button"
+              onClick={() =>
+                downloadArtifact('radio-transcript.csv', radioCsv(session), 'text/csv')
+              }
+            >
+              Export radio CSV
+            </button>
+            <button
+              className="secondary-button"
+              onClick={() =>
+                downloadArtifact('session-report.txt', sessionReport(session), 'text/plain')
+              }
+            >
+              Export session report
+            </button>
             <button className="primary-button" onClick={exportSession}>
               <Download size={15} />
               Export session JSON
@@ -1688,35 +1901,83 @@ export default function App() {
             </div>
             <p>
               Browser recognition does not provide AudioWorklet pre-roll or reliable phrase hints.
-              Airport geometry, radio assignments, holding points, squawks and flight levels are
-              exercise placeholders, unverified against the Malaysian AIP.
+              Chart geometry and holding points follow the existing CAAM trace dataset and remain
+              unvalidated. Radio assignments, squawks and flight levels retain the exercise
+              defaults.
             </p>
           </div>
           <div className="settings-section">
-            <h3>Weather / ATIS</h3>
-            <div className="settings-row">
-              <label>
-                Wind{' '}
-                <input
-                  aria-label="Weather wind"
-                  value={weather.wind}
-                  onChange={(e) =>
-                    setWeather((w) => ({ ...w, wind: e.target.value, atis: (w.atis + 1) % 26 }))
+            <h3>
+              <Radio size={17} />
+              Voice input and readback
+            </h3>
+            <p>
+              Click the microphone to dictate a draft, then check its callsign, runway, route, and
+              frequency before transmitting. Browser support varies. Your browser may send audio to
+              its speech service; the app retains text only and does not record audio. Permission,
+              network, or recognition failures leave typed transmissions available.
+            </p>
+            <label className="observation-priority">
+              Pilot voice
+              <select
+                aria-label="Pilot voice"
+                value={voiceURI}
+                onChange={(e) => {
+                  setVoiceURI(e.target.value)
+                  try {
+                    localStorage.setItem('vatsim-ai.readback-voice', e.target.value)
+                  } catch {
+                    /* Voice selection still applies for this tab. */
                   }
-                />
-              </label>
-              <label>
-                QNH{' '}
-                <input
-                  aria-label="Weather QNH"
-                  value={weather.qnh}
-                  onChange={(e) =>
-                    setWeather((w) => ({ ...w, qnh: e.target.value, atis: (w.atis + 1) % 26 }))
-                  }
-                />
-              </label>
-            </div>
+                }}
+              >
+                <option value="">Best available English voice</option>
+                {readbackVoices.map((v) => (
+                  <option key={v.voiceURI} value={v.voiceURI}>
+                    {v.name} · {v.lang}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p>
+              {readbackVoice
+                ? `Selected: ${readbackVoice.name}.`
+                : 'No English voices reported yet; using the browser default.'}{' '}
+              Natural voices depend on your browser and operating system. Some voices need a network
+              connection.
+            </p>
+            <button
+              className="secondary-button"
+              onClick={() =>
+                speakReadback(
+                  'Taxi via T2 T3 F1 G B9 A A11, hold short runway 32R, Malaysian six one two.',
+                  true,
+                )
+              }
+            >
+              Preview pilot voice
+            </button>
+            <label className="observation-priority">
+              Pilot readback speed
+              <select
+                aria-label="Pilot readback speed"
+                value={voiceRate}
+                onChange={(e) => setVoiceRate(Number(e.target.value))}
+              >
+                <option value={0.8}>0.8×</option>
+                <option value={0.95}>0.95×</option>
+                <option value={1}>1×</option>
+                <option value={1.2}>1.2×</option>
+              </select>
+            </label>
           </div>
+          <DataReadiness exercise={session.exercise} />
+          <WeatherPanel
+            key={`settings-weather-${session.id}`}
+            weather={session.weather}
+            disabled={!ready || replayIndex !== null}
+            act={act}
+          />
           <div className="settings-section">
             <h3>
               <Activity size={17} />
@@ -1756,7 +2017,7 @@ export default function App() {
               </div>
               <div>
                 <dt>Validation</dt>
-                <dd className="amber-text">Illustrative · unverified</dd>
+                <dd className="amber-text">Chart-transcribed · unvalidated</dd>
               </div>
               <div>
                 <dt>Simulation</dt>

@@ -20,7 +20,7 @@ The first release is a development prototype. It is not an approved training dev
 - Event snapshots, event-by-event inspection, session JSON export, optional browser-generated readback audio.
 - Responsive browser workstation; same-browser instructor panel, not a separate multi-user station.
 
-Pilot messages are scripted. There is no microphone input, speech recognition, external AI connection, competency scoring, server persistence service, user authentication, or live VATSIM connection. IndexedDB checkpoints recover paused after refresh. A local exercise library provides validated import and independent restored copies; exported JSON is the portable retention mechanism. Browser storage is not a professional records archive.
+Pilots are scripted or human-operated through local takeover. Optional browser speech recognition prepares controller drafts for review; it never transmits automatically. There is no generative pilot AI, automatic competency scoring, server persistence service, user authentication, or live VATSIM connection. IndexedDB checkpoints recover paused after refresh. A local exercise library provides validated import and independent restored copies; exported JSON is the portable retention mechanism. Browser storage is not a professional records archive.
 
 ## First professional development objective
 
@@ -28,12 +28,12 @@ Complete an instructor-reviewed departure and arrival exercise on a versioned WM
 
 ## Roles
 
-| Role                   | Required capability                                             | Current status                                              |
-| ---------------------- | --------------------------------------------------------------- | ----------------------------------------------------------- |
-| Trainee                | Surface display, flight strips, radio, clearances, coordination | Local text workflow implemented; coordination pending       |
-| Instructor             | Exercise control, observations, event injection, replay, rubric | Local controls and event review implemented; rubric pending |
-| Pseudo-pilot           | Override communications and aircraft actions                    | Planned                                                     |
-| Training administrator | Controlled lessons, releases, permissions, retained records     | Planned                                                     |
+| Role                   | Required capability                                             | Current status                                                                                       |
+| ---------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Trainee                | Surface display, flight strips, radio, clearances, coordination | Local text/voice-draft workflow and exercise coordination implemented                                |
+| Instructor             | Exercise control, observations, event injection, replay, rubric | Local controls, linked observations, manual draft criteria, replay and reports implemented           |
+| Pseudo-pilot           | Override communications and aircraft actions                    | Local takeover, queued execution, radio and motion freeze implemented                                |
+| Training administrator | Controlled lessons, releases, permissions, retained records     | Local versioned lesson library and portable reports; cloud roles/archives outside browser-only scope |
 
 ## Product requirements
 
@@ -75,3 +75,7 @@ This repository implements a schematic technical foundation for gate C. It does 
 ## Release principle
 
 Every training release locks its software commit, airport dataset, scenario version, aircraft models, and speech/AI configuration. A development count or automated observation is never presented as a competency score.
+
+## Owner-selected consolidated browser scope
+
+Version 0.4 combines lesson authoring, traffic scheduling, exercise weather, timed events, adjacent-station practice, browser voice drafts, manual instructor criteria, replay playback, printable/CSV exports, release provenance and source-readiness display. This is a single software release; it does not assert completion of the professional review gates. Accounts, shared sessions and server archives are excluded by the owner’s browser-only choice. See [the release walkthrough](RELEASE_0_4.md) for supported bounds and remaining external validation.

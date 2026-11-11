@@ -4,7 +4,7 @@
 
 ```text
 React workstation
-    │ browser speech / typed / click transmission + selected frequency
+    │ typed transmission + selected frequency
     ▼
 Structured parser ──► phase/frequency/route checks
     │
@@ -21,13 +21,13 @@ Session engine ──► aircraft state + scripted readback + event snapshot
 - `src/sim/parser.ts`: constrained grammar; unknown or conflicting instructions are not guessed.
 - `src/sim/engine.ts`: immutable session updates, motion along routes, radio ownership, scripted readbacks, instructor events, and historical snapshots.
 - `src/components/AirportMap.tsx`: display geometry, layers, route overlay, pan/zoom and selection.
-- `src/sim/sessionCodec.ts`: bounded JSON validation and version 0.1/0.2 migration.
+- `src/sim/sessionCodec.ts`: bounded JSON validation and version 0.1/0.2/0.3 migration.
 - `src/storage/sessionStore.ts`: transactional IndexedDB checkpoints.
 - `src/hooks/useSession.ts`: startup recovery, serialized saves, storage status and save retry.
 - `src/components/SessionLibrary.tsx`: checkpoint library and import controls.
 - `src/App.tsx`: local session orchestration, controller/instructor UI, dialogs and export/import.
 
-The browser timer feeds a fixed 10 Hz integrator with fractional carry while running; a background tab automatically pauses the exercise. Movement values are display-space demonstration values, not physical performance models. A final approach progresses at 1.5 schematic units/second. The exercise decision point is 25 units before the runway threshold; absent clearance or an occupied runway causes a recorded automatic go-around. A cleared aircraft occupies the runway only at touchdown. Integration uses exact 0.1 second steps to avoid skipping transitions under acceleration. These are exercise model values, not published minima or validated aircraft dynamics.
+The browser timer advances the clock in small steps while running; a background tab automatically pauses the exercise. Movement values are display-space demonstration values, not physical performance models. A final approach progresses at 1.5 schematic units/second. The exercise decision point is 25 units before the runway threshold; absent clearance or an occupied runway causes a recorded automatic go-around. A cleared aircraft occupies the runway only at touchdown. Integration uses substeps no larger than one simulated second to avoid skipping transitions under acceleration. These are exercise model values, not published minima or validated aircraft dynamics.
 
 Event snapshots are deep copied. A replay snapshot includes aircraft state and runway obstruction state; it does not regenerate pilot dialogue. Event inspection pauses the live session, disables clearance transmission, and displays historical aircraft details.
 
@@ -44,7 +44,7 @@ Vercel serves a static Vite build. No environment variables, secret keys, databa
 | Output directory | `dist`          |
 | Node.js          | 24.x            |
 
-`vercel.json` declares the build and basic response headers. Microphone access is disabled because speech input is not implemented. Update the policy deliberately when adding voice input. Branch previews should be reviewed before production promotion. Hosting access controls remain the owner's Vercel project responsibility; this app does not implement authentication.
+`vercel.json` declares the build and basic response headers. Microphone access is allowed for the same origin for explicit browser speech-draft input. Camera and geolocation remain disabled. Speech recognition may use the browser provider’s remote service, requires user activation/permission and always leaves a reviewable text draft. Branch previews should be reviewed before production promotion. Hosting access controls remain the owner's Vercel project responsibility; this app does not implement authentication.
 
 ## Next architecture stages
 
@@ -64,7 +64,7 @@ Recorded events and pauses trigger autosave; movement is checkpointed approximat
 
 Manual restore/import validates the record before replacement, checkpoints the current exercise when storage is available, and forks the restored record under a fresh ID. Original checkpoints remain. Portable file import limits: 10 MB, 2,500 events, known dataset/scenario/engine version, finite movement values, valid radio/runway/phase data, consistent counters, ordered event IDs/times, and valid historical snapshots. Version 0.1 airborne landing states are migrated to the version 0.2 approach model; historical facts are retained. Record structure is validated; authenticity is not established.
 
-Current export format: `vatsim-ai.session.v3`, engine `0.3.0`, dataset `wmkk-schematic-0.1`. No recorded audio, database authentication, or formal assessment evidence is provided.
+Current export format: `vatsim-ai.session.v4`, engine `0.4.0`, dataset `wmkk-schematic-0.1`. No recorded audio, database authentication, or formal assessment evidence is provided.
 
 Browser checkpoint recovery and library restoration validate the same structure without the portable file-import history cap, so an exercise exceeding 2,500 events remains recoverable. The transmission engine rejects inputs exceeding 1,000 characters before recording their contents; a bounded instructor observation records the rejection.
 
@@ -76,6 +76,12 @@ Pilot events include scripted/operator attribution. Instructor observations are 
 
 `PilotStation.tsx` and `ObservationEditor.tsx` provide the local instructor controls. These are workstation roles, without authentication or multiuser isolation. See [release 0.3](RELEASE_0_3.md) for limitations and a review walkthrough.
 
-## November workstation overhaul
+## Consolidated local workflows (version 0.4)
 
-See [overhaul implementation status](OVERHAUL_IMPLEMENTATION.md). `src/workstation/` owns strip bay/approach adapters, label placement, equipment tokens and the browser PTT/recognition adapter. Recognition results use the existing parser/validator. New events include optional UTC stamps; legacy events retain elapsed-time display. Held ground routes and the 10 Hz integrator remainder survive checkpoint decode. This does not replace snapshots with seeded event reconstruction.
+`exercises.ts` validates bounded, portable lesson definitions and builds traffic from the existing modelled profiles. `exerciseStore.ts` retains up to 30 lessons in local storage; sessions embed their own definition so subsequent library edits cannot change a running exercise. The engine releases scheduled aircraft, applies timed events once, stores fictional weather, and records adjacent-station request/decision state. Eight-second scripted coordination delay is an exercise value, not a WMKK procedure. Handoff remains a separate controller command.
+
+`useVoiceDraft.ts` wraps optional browser speech recognition. The microphone never auto-starts and recognition never calls the transmission engine. Pauses, replay, dialogs, backgrounding and unmount cancel capture; stale callbacks are ignored. Provider errors preserve the typed workflow. No speech API keys or application audio recording are introduced.
+
+Manual assessment entries refer to the embedded criterion version and captured evidence. Revisions replace the current criterion result while retaining prior assessment events. `reports.ts` escapes all report text and protects CSV formulas. HTML is a standalone printable export; JSON remains the full structured record. Replay is event playback at a chosen event rate and does not interpolate aircraft motion or regenerate pilot responses.
+
+Version 0.3 migration retains pseudo-pilot state and event links. Weather, coordination, criteria, trigger progress and activation times are validated in version 0.4 records. Vercel build commits are embedded in release/export metadata; local builds are explicitly marked. The scope excludes cloud roles, institutional archives and professional data/model validation. See [release 0.4](RELEASE_0_4.md).
