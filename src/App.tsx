@@ -45,6 +45,7 @@ import { readPreference, writePreference } from './workstation/preferences'
 import StripBay from './workstation/StripBay'
 import FinalApproach from './workstation/FinalApproach'
 import { useRadio } from './workstation/useRadio'
+import { speechHints } from './workstation/speechHints'
 import { holdingPoint, rfl, squawk, safetyAlerts, stopBarOff, utcTime } from './workstation/model'
 import AirportMap from './components/AirportMap'
 import ModalShell from './components/ModalShell'
@@ -170,6 +171,10 @@ export default function App() {
   const [toast, setToast] = useState('')
   const [audio, setAudio] = useState(() => readPreference('wmkk-audio') === 'true')
   const [mode, setMode] = useState(() => readPreference('wmkk-mode') || 'night')
+  const [speechLanguage, setSpeechLanguage] = useState(
+    () => readPreference('wmkk-speech-language') || 'en-GB',
+  )
+  useEffect(() => writePreference('wmkk-speech-language', speechLanguage), [speechLanguage])
   const [voiceInput, setVoiceInput] = useState(() => readPreference('wmkk-voice') === 'true')
   const [pttBinding, setPttBinding] = useState(
     () =>
@@ -441,6 +446,8 @@ export default function App() {
     channel: frequency,
     notify: setToast,
     voice: voiceInput,
+    language: speechLanguage,
+    hints: speechHints(session.aircraft),
     binding: pttBinding,
     latch,
   })
@@ -930,7 +937,11 @@ export default function App() {
                       className="voice-button"
                       aria-label={voice.listening ? 'Stop voice capture' : 'Dictate instruction'}
                       disabled={
-                        !ready || !session.running || replayIndex !== null || radio.transmitting
+                        !ready ||
+                        !session.running ||
+                        replayIndex !== null ||
+                        radio.transmitting ||
+                        radio.processing
                       }
                       onClick={voice.toggle}
                     >
@@ -1128,6 +1139,41 @@ export default function App() {
                 </details>
                 <section className="ptt-equipment">
                   <h3>Push to talk</h3>
+                  <div className="ptt-mode" role="group" aria-label="PTT input mode">
+                    <button
+                      aria-pressed={voiceInput}
+                      disabled={
+                        !radio.supported ||
+                        radio.transmitting ||
+                        radio.processing ||
+                        voice.listening
+                      }
+                      onClick={() => setVoiceInput(true)}
+                    >
+                      Voice PTT
+                    </button>
+                    <button
+                      aria-pressed={!voiceInput}
+                      disabled={radio.transmitting || radio.processing || voice.listening}
+                      onClick={() => setVoiceInput(false)}
+                    >
+                      Typed PTT
+                    </button>
+                  </div>
+                  {voiceInput && (
+                    <label className="speech-language">
+                      Speech language
+                      <select
+                        value={speechLanguage}
+                        disabled={radio.transmitting || radio.processing}
+                        onChange={(e) => setSpeechLanguage(e.target.value)}
+                      >
+                        <option value="en-GB">English (UK)</option>
+                        <option value="en-US">English (US)</option>
+                        <option value="en-MY">English (Malaysia)</option>
+                      </select>
+                    </label>
+                  )}
                   <button
                     className={`ptt-button ${radio.transmitting ? 'tx' : ''}`}
                     aria-label="Push to talk"
@@ -1143,9 +1189,6 @@ export default function App() {
                       if (!latch) radio.release()
                     }}
                     onPointerCancel={() => radio.release(true)}
-                    onLostPointerCapture={() => {
-                      if (!latch) radio.release(true)
-                    }}
                     onKeyDown={(e) => {
                       if (['Space', 'Enter'].includes(e.code)) {
                         e.preventDefault()
@@ -1182,7 +1225,55 @@ export default function App() {
                       : 'Typed PTT · enter text in the R/T log, then hold and release.'}{' '}
                     Window must have focus.
                   </p>
-                  {radio.recognised && <p className="recognised-text">{radio.recognised}</p>}
+                  {voiceInput && (
+                    <p className="equipment-help" role="status">
+                      {
+                        {
+                          idle: 'Ready for browser speech.',
+                          starting: 'Starting microphone…',
+                          listening: 'Microphone open — listening…',
+                          speech: 'Speech detected.',
+                          captured: 'Capture ended — release PTT to finish.',
+                          processing: 'Waiting for speech result…',
+                          error: 'Speech capture failed.',
+                        }[radio.captureStatus]
+                      }{' '}
+                      {radio.hintsApplied
+                        ? 'Active callsign hints applied.'
+                        : 'Callsign hints require browser support.'}{' '}
+                      Say digits separately, e.g. “Malaysian one one three four”.
+                    </p>
+                  )}
+                  {radio.feedback && (
+                    <p className="speech-feedback" role="status">
+                      {radio.feedback}
+                    </p>
+                  )}
+                  {radio.recognised && (
+                    <div className="speech-results">
+                      <p className="recognised-text">{radio.recognised}</p>
+                      <button
+                        disabled={radio.transmitting || radio.processing}
+                        onClick={() => prepare(radio.recognised)}
+                      >
+                        Edit recognised text
+                      </button>
+                      {radio.alternatives.length > 0 && (
+                        <details>
+                          <summary>Alternative transcripts — edit before sending</summary>
+                          {radio.alternatives.map((text) => (
+                            <button
+                              key={text}
+                              disabled={radio.transmitting || radio.processing}
+                              onClick={() => prepare(text)}
+                            >
+                              {text}
+                            </button>
+                          ))}
+                        </details>
+                      )}
+                    </div>
+                  )}
                 </section>
                 <section className="vccs-equipment">
                   <h3>Voice comms (VCCS)</h3>
@@ -1758,8 +1849,11 @@ export default function App() {
               <span>
                 Browser speech recognition
                 <small>
-                  Chrome cloud processing; microphone permission required.{' '}
-                  {radio.supported ? 'Available in this browser.' : 'Unavailable in this browser.'}
+                  Uses your browser’s online speech service; microphone permission is separate from
+                  Voice PTT mode.{' '}
+                  {radio.supported
+                    ? 'Speech API detected; service availability depends on your browser.'
+                    : 'Unavailable in this browser.'}
                 </small>
               </span>
               <button
