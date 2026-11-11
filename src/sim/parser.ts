@@ -48,8 +48,9 @@ function normalize(text: string) {
   return text
     .toLowerCase()
     .replace(/\bmalaysian\b/g, 'mas')
-    .replace(/\bair\s?asia\b/g, 'axm')
-    .replace(/\bbatik(?:\s+air)?\b/g, 'mxd')
+    .replace(/\bredcap\b/g, 'axm')
+    .replace(/\bmalindo\b/g, 'mxd')
+    .replace(/\bsingapore\b/g, 'sia')
     .replace(
       /\b(zero|one|two|three|tree|four|five|fife|six|seven|eight|nine|niner)\b/g,
       (word) => digits[word],
@@ -61,7 +62,7 @@ function normalize(text: string) {
     .replace(/\b(right|left)\b/g, (word) => (word === 'right' ? 'r' : 'l'))
     .replace(/(?<=\d)\s+(?=\d)/g, '')
     .replace(/(?<=\d)\s+(?=[rl]\b)/g, '')
-    .replace(/\b(mas|axm|mxd)\s+(?=\d)/g, '$1')
+    .replace(/\b(mas|axm|mxd|sia)\s+(?=\d)/g, '$1')
     .replace(/[,;!]/g, ' ')
     .replace(/\.(?!\d)/g, ' ')
     .replace(/\s+/g, ' ')

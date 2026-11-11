@@ -11,8 +11,8 @@ import {
   METRES_PER_UNIT,
   MAP_ROTATION,
 } from '../sim/geometry'
-import { useState } from 'react'
-import { Crosshair, Layers3, Minus, Plus, Route, Wind } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Crosshair, Layers3, Minus, Plus, Route, Wind, Plane } from 'lucide-react'
 import { PHASE_LABELS, RUNWAYS } from '../sim/airport'
 import type { Aircraft, RunwayId, Weather } from '../sim/types'
 
@@ -32,6 +32,15 @@ export default function AirportMap({
   replay,
   weather,
 }: Props) {
+  const svgRef = useRef<SVGSVGElement>(null)
+  const [canvasSize, setCanvasSize] = useState(440)
+  useEffect(() => {
+    const observer = new ResizeObserver(([entry]) =>
+      setCanvasSize(Math.min(entry.contentRect.width, entry.contentRect.height)),
+    )
+    if (svgRef.current) observer.observe(svgRef.current)
+    return () => observer.disconnect()
+  }, [])
   const [zoom, setZoom] = useState(1)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
   const [routes, setRoutes] = useState(true)
@@ -59,6 +68,15 @@ export default function AirportMap({
   const fitSize = Math.max(950, maxY - minY + 140, maxX - minX + 200)
   const fitY = (minY + maxY) / 2,
     fitX = (minX + maxX) / 2 + 40
+  const unitsPerPixel = fitSize / zoom / Math.max(1, canvasSize)
+  const scaleTarget = 80 * unitsPerPixel * METRES_PER_UNIT
+  const magnitude = 10 ** Math.floor(Math.log10(scaleTarget))
+  const scaleMetres =
+    [1, 2, 5]
+      .map((n) => n * magnitude)
+      .filter((n) => n <= scaleTarget)
+      .at(-1) ?? magnitude
+  const scalePixels = scaleMetres / METRES_PER_UNIT / unitsPerPixel
   return (
     <section className="map-panel" aria-label="WMKK chart-transcribed airport display">
       <div className="map-heading">
@@ -102,6 +120,7 @@ export default function AirportMap({
           </span>
         </div>
         <svg
+          ref={svgRef}
           className={`airport-svg ${drag ? 'dragging' : ''}`}
           viewBox={`${fitX - fitSize / 2 / zoom + offset.x} ${fitY - fitSize / 2 / zoom + offset.y} ${fitSize / zoom} ${fitSize / zoom}`}
           role="img"
@@ -168,7 +187,7 @@ export default function AirportMap({
                     x={line.points[0].x + 4}
                     y={line.points[0].y - 4}
                     className="taxi-label"
-                    style={{ fontSize: 7 }}
+                    style={{ fontSize: 11 * unitsPerPixel }}
                   >
                     {line.name}
                   </text>
@@ -214,7 +233,7 @@ export default function AirportMap({
                       y={y - 15}
                       textAnchor="middle"
                       className="terminal-label"
-                      style={{ fontSize: 9 }}
+                      style={{ fontSize: 11 * unitsPerPixel }}
                     >
                       {t.name}
                     </text>
@@ -225,7 +244,8 @@ export default function AirportMap({
             {labels &&
               zoom >= 1.5 &&
               PARKING_STANDS.map(({ name, position, apron }) => (
-                <g key={name}>
+                <g key={name} data-gate={name}>
+                  <title>Stand {name}</title>
                   <line
                     x1={position.x}
                     y1={position.y}
@@ -233,18 +253,16 @@ export default function AirportMap({
                     y2={apron.y}
                     stroke="#d5c375"
                     strokeWidth=".55"
-                    opacity=".7"
                   />
-                  {labels && (
-                    <text
-                      x={position.x}
-                      y={position.y - 2}
-                      className="stand-label"
-                      style={{ fontSize: 5 }}
-                    >
-                      {name}
-                    </text>
-                  )}
+                  <text
+                    transform={`translate(${position.x} ${position.y}) rotate(${-MAP_ROTATION})`}
+                    y={-3 * unitsPerPixel}
+                    textAnchor="middle"
+                    className="gate-map-label"
+                    style={{ fontSize: 11 * unitsPerPixel, strokeWidth: 3 * unitsPerPixel }}
+                  >
+                    {name}
+                  </text>
                 </g>
               ))}
             {Object.entries(STANDS).map(([name, p]) => (
@@ -258,7 +276,14 @@ export default function AirportMap({
                   strokeWidth="1"
                 />
                 {labels && (
-                  <text x={p.x} y={p.y - 4} className="stand-label" style={{ fontSize: 7 }}>
+                  <text
+                    data-gate={name}
+                    transform={`translate(${p.x} ${p.y}) rotate(${-MAP_ROTATION})`}
+                    y={-8 * unitsPerPixel}
+                    textAnchor="middle"
+                    className="gate-map-label"
+                    style={{ fontSize: 12 * unitsPerPixel, strokeWidth: 3 * unitsPerPixel }}
+                  >
                     {name}
                   </text>
                 )}
@@ -284,10 +309,20 @@ export default function AirportMap({
                   strokeWidth=".7"
                   strokeDasharray="5 6"
                 />
-                <text x={r.x + 7} y={r.top + 8} className="runway-number" style={{ fontSize: 9 }}>
+                <text
+                  x={r.x + 7}
+                  y={r.top + 8}
+                  className="runway-number"
+                  style={{ fontSize: 14 * unitsPerPixel }}
+                >
                   {r.opposite}
                 </text>
-                <text x={r.x + 7} y={r.bottom} className="runway-number" style={{ fontSize: 9 }}>
+                <text
+                  x={r.x + 7}
+                  y={r.bottom}
+                  className="runway-number"
+                  style={{ fontSize: 14 * unitsPerPixel }}
+                >
                   {id}
                 </text>
                 <line
@@ -319,7 +354,7 @@ export default function AirportMap({
                     x={r.hold.x + 4}
                     y={r.hold.y - 6}
                     className="taxi-label"
-                    style={{ fontSize: 7 }}
+                    style={{ fontSize: 11 * unitsPerPixel }}
                   >
                     {HOLD_NAMES[id as RunwayId]} HOLD
                   </text>
@@ -330,7 +365,7 @@ export default function AirportMap({
               <g
                 transform={`translate(${RUNWAYS[blockedRunway].x} ${(RUNWAYS[blockedRunway].top + RUNWAYS[blockedRunway].bottom) / 2}) rotate(${-MAP_ROTATION})`}
               >
-                <circle r="19" stroke="#efad75" fill="#573e2b" strokeDasharray="3 3" />
+                <circle r="13" stroke="#efad75" fill="#573e2b" strokeDasharray="3 3" />
                 <path d="m-7-7 14 14m0-14L-7 7" stroke="#efad75" strokeWidth="2" />
                 <text x="29" y="4" fill="#efad75" className="aircraft-map-label">
                   RWY OCCUPIED
@@ -370,82 +405,74 @@ export default function AirportMap({
                   className="aircraft-marker"
                   aria-hidden="true"
                 >
-                  <circle r="27" fill="transparent" />
-                  {a.id === selected && (
-                    <>
-                      <circle r="23" fill="#b6e76a" opacity=".08" />
-                      <circle
-                        r="19"
-                        stroke="#c5e78d"
-                        strokeWidth="1"
-                        fill="none"
-                        strokeDasharray="3 4"
-                      />
-                    </>
-                  )}
-                  <use
-                    href="#aircraft-symbol"
-                    x="-10"
-                    y="-14"
-                    width="20"
-                    height="28"
-                    fill={
-                      a.id === selected
-                        ? '#d7f5a9'
-                        : a.operation === 'arrival'
-                          ? '#93cfe2'
-                          : '#b4c8c0'
-                    }
-                    transform={`rotate(${a.heading})`}
-                  />
-                  <g
-                    transform={`rotate(${-MAP_ROTATION}) translate(0 ${a.stand === 'B8' ? 55 : 0})`}
-                  >
-                    <rect
-                      x="20"
-                      y="-18"
-                      width="126"
-                      height="46"
-                      rx="3"
-                      fill="#122823"
-                      fillOpacity=".85"
-                    />
-                    <text
-                      x="26"
-                      y="-3"
-                      className="aircraft-map-label"
+                  <g transform={`scale(${unitsPerPixel})`}>
+                    <circle r="18" fill="transparent" />
+                    {a.id === selected && (
+                      <>
+                        <circle r="15" fill="#b6e76a" opacity=".08" />
+                        <circle
+                          r="13"
+                          stroke="#c5e78d"
+                          strokeWidth="1"
+                          fill="none"
+                          strokeDasharray="3 4"
+                        />
+                      </>
+                    )}
+                    <use
+                      href="#aircraft-symbol"
+                      x="-10"
+                      y="-14"
+                      width="20"
+                      height="28"
                       fill={
                         a.id === selected
                           ? '#d7f5a9'
                           : a.operation === 'arrival'
                             ? '#93cfe2'
-                            : '#c4d7ce'
+                            : '#b4c8c0'
                       }
+                      transform={`rotate(${a.heading})`}
+                    />
+                    <g
+                      transform={`rotate(${-MAP_ROTATION}) translate(0 ${a.stand === 'B8' ? 36 : 0})`}
                     >
-                      {a.id}
-                    </text>
-                    <text x="26" y="15" className="aircraft-map-detail">
-                      {a.type} ·{' '}
-                      {a.speed ? `${a.speed} KT` : a.phase === 'final' ? 'FINAL' : a.stand}
-                    </text>
+                      <rect
+                        x="20"
+                        y="-14"
+                        width="100"
+                        height="32"
+                        rx="3"
+                        fill="#122823"
+                        fillOpacity=".85"
+                      />
+                      <text
+                        x="26"
+                        y="-3"
+                        className="aircraft-map-label"
+                        style={{ fontSize: 11 }}
+                        fill={
+                          a.id === selected
+                            ? '#d7f5a9'
+                            : a.operation === 'arrival'
+                              ? '#93cfe2'
+                              : '#c4d7ce'
+                        }
+                      >
+                        {a.id}
+                      </text>
+                      <text x="26" y="10" className="aircraft-map-detail" style={{ fontSize: 9 }}>
+                        {a.type} ·{' '}
+                        {a.speed
+                          ? `${Math.round(a.speed)} KT`
+                          : a.phase === 'final'
+                            ? 'FINAL'
+                            : a.stand}
+                      </text>
+                    </g>
                   </g>
                 </g>
               ))}
-          </g>
-          <g
-            transform={`translate(${fitX - fitSize / 2 / zoom + offset.x + 30} ${fitY + fitSize / 2 / zoom + offset.y - 35})`}
-          >
-            <line
-              x1="0"
-              y1="0"
-              x2={1000 / METRES_PER_UNIT}
-              y2="0"
-              stroke="#b3c2ba"
-              strokeWidth="3"
-            />
-            <text y="-10" fill="#b3c2ba" fontSize="20">
-              1 KM · APPROX.
-            </text>
           </g>
         </svg>
         <div className="north-indicator">
@@ -456,11 +483,30 @@ export default function AirportMap({
           </svg>
         </div>
         <div className="map-zoom">
-          <button onClick={() => setZoom(Math.min(5, zoom + 0.25))} aria-label="Zoom in">
+          <button
+            aria-label="Focus selected aircraft"
+            title="Focus selected aircraft and nearby gates"
+            disabled={!selectedAircraft}
+            onClick={() => {
+              if (!selectedAircraft) return
+              const p = rotate(selectedAircraft.position)
+              setZoom(12)
+              setOffset({ x: p.x - fitX, y: p.y - fitY })
+            }}
+          >
+            <Plane size={16} />
+          </button>
+          <button
+            onClick={() => setZoom(Math.min(20, Math.round(zoom * 1.4 * 100) / 100))}
+            aria-label="Zoom in"
+          >
             <Plus size={16} />
           </button>
           <span>{zoom.toFixed(2)}×</span>
-          <button onClick={() => setZoom(Math.max(0.65, zoom - 0.25))} aria-label="Zoom out">
+          <button
+            onClick={() => setZoom(Math.max(0.65, Math.round((zoom / 1.4) * 100) / 100))}
+            aria-label="Zoom out"
+          >
             <Minus size={16} />
           </button>
           <button
@@ -474,7 +520,10 @@ export default function AirportMap({
           </button>
         </div>
         <div className="map-scale">
-          <small>APPROXIMATE CHART TRACE</small>
+          <span style={{ width: scalePixels, display: 'block' }} />
+          <small>
+            {scaleMetres >= 1000 ? `${scaleMetres / 1000} km` : `${scaleMetres} m`} · approx.
+          </small>
         </div>
         {selectedAircraft && (
           <div className="selected-map-card">

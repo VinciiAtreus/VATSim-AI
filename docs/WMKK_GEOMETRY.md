@@ -26,7 +26,7 @@ The published AD 2.12 threshold anchors used for registration are:
 
 A local equirectangular calculation uses radius 6,371,000 m and the 14R latitude for longitude scale, then rotates into axes aligned with 326.01° true. Relative to 14R, 14L is approximately (2546.61, −3002.10) m and 15 (−2199.74, −802.58) m. Registration interpolates between runway columns and maps their manually selected raster endpoints to the published lengths: 14L/32R **4019 m**, 14R/32L **4000 m**, 15/33 **3960 m**, all **60 m** wide. This is approximate registration between anchors, not an accuracy certification.
 
-One simulation unit is 10 m. The SVG rotates the runway-aligned data −33.99° to show north up. The runway drawing, approach, touchdown, roll-out, hold-short, entry and departures use those same coordinates. Knots convert through 1852 m / 3600 s; old display-space motion constants are removed. Constant speeds, instantaneous turns and the 16⅔-second decision policy remain exercise simplifications, not aircraft performance or operational minima. Initial final approach retains a 90-second flight to threshold. Selecting the arrival fits its actual off-airport position into view; the normal airport view fits the runway geometry.
+One simulation unit is 10 m. The SVG rotates the runway-aligned data −33.99° to show north up. The runway drawing, approach, touchdown, roll-out, hold-short, entry and departures use those same coordinates. Knots convert through 1852 m / 3600 s; old display-space motion constants are removed. The 16⅔-second decision policy and geometric turns remain exercise simplifications; the 0.5.1 speed follow-up below adds generic acceleration/braking, not aircraft performance or operational minima. Initial final approach retains a 90-second flight to threshold. Selecting the arrival fits its actual off-airport position into view; the normal airport view fits the runway geometry.
 
 ## Supported movement and clearance limits
 
@@ -53,3 +53,22 @@ Voice drafts, browser-only persistence, instructor controls, coordination, autho
 ## Review checks
 
 Automated tests cover published runway lengths, knot conversion, connected rendered route edges, interrupted taxi resumption, rejection of the old single-letter clearance, hold-short occupancy, dataset incompatibility, and the existing release workflows. Browser checks cover map zoom/fit/labels and unchanged export of an incompatible record. Local validation: 100 unit tests, 30 Chromium browser tests, production build, formatting and diff checks passed. Airport and parking-detail screenshots were inspected. These checks verify implementation behavior; they do not constitute CAAM or professional validation.
+
+## Readability, telephony and speed follow-up (0.5.1)
+
+Aircraft symbols/cards now retain a fixed screen size while the geometry zooms. Parking labels are upright with a contrasting halo; maximum zoom is 20× and the focus-aircraft control centres the selected aircraft at 12×. The fixed-size scale overlay selects an appropriate metre/kilometre interval instead of enlarging a 1 km label with the SVG. Taxiway/terminal labels also stay compact.
+
+The owner's telephony mapping is applied to speech parsing, built-in profiles and lesson callsign edits: MAS → MALAYSIAN, MXD → MALINDO, AXM → REDCAP, SIA → SINGAPORE. Version 0.5.0 checkpoints remain importable with a model-change notice; current aircraft telephony is updated while original records and historical snapshots retain their original contents.
+
+Motion now ramps speed using acceleration/braking rather than instantly applying a constant target. Taxi targets are at most 15 kt, reduced to 8 kt near modelled stands; corner braking anticipates a 7 kt turn target and stopping distance to the clearance limit. Pushback targets 4 kt, line-up 8 kt. Taxi acceleration is 0.6 m/s² and braking 0.8 m/s²; pushback accelerates at 0.3 m/s². Departure acceleration is 2 m/s² toward the existing 145 kt exercise target. Landing braking anticipates the exit instead of traversing the exit at 110 kt. These are generic exercise parameters, not aircraft-specific or professionally validated performance.
+
+Measured complete departure taxis at 1× (excluding pushback and runway entry):
+
+| Profile          | Traced route distance | Exercise time      |
+| ---------------- | --------------------- | ------------------ |
+| MAS612, B6 → A11 | about 2,212 m         | 341 s (5 min 41 s) |
+| AXM518, Q4 → Y9  | about 3,812 m         | 522 s (8 min 42 s) |
+
+The 4× control accelerates the simulation clock deliberately: the same journeys take about 86/131 wall-clock seconds, while remaining about 344/524 exercise seconds (measurement rounded to whole wall-clock ticks). Tests verify both journeys are still taxiing after ten wall-clock seconds, their distance/time lower bound at 15 kt, smooth initial acceleration, corner braking and unchanged graph endpoints. Acceleration and braking do not establish turn-radius, aircraft-envelope, weather, mass or aircraft-specific performance validation.
+
+Follow-up verification: 110 unit tests and 32 Chromium browser tests passed, along with production build, formatting and diff checks. Maximum-zoom screenshots were inspected at 1816 × 886. Compatible 0.5.0 checkpoint recovery forks a new session ID, preserving the original stored envelope and historical snapshots.

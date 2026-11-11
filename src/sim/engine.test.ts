@@ -21,7 +21,7 @@ function atHoldingPoint(s = createSession('departure')) {
 function linedUp(s = atHoldingPoint()) {
   s = send(s, 'MAS612, contact Lumpur Tower 118.800')
   s = send(s, 'MAS612, runway 32R, line up and wait', '118.800')
-  return advance(s, 25)
+  return advance(s, 45)
 }
 
 describe('radio interpretation', () => {

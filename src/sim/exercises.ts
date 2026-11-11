@@ -1,3 +1,4 @@
+import { applyTelephony } from './callsigns'
 import { AIRPORT_DATA, initialAircraft, SCENARIOS } from './airport'
 import type { Aircraft, ExerciseDefinition, Weather } from './types'
 
@@ -168,7 +169,7 @@ export function exerciseAircraft(definition: ExerciseDefinition): Aircraft[] {
     return {
       ...a,
       id: t.callsign,
-      spoken: t.spoken,
+      spoken: applyTelephony(t.callsign, t.spoken),
       position: { ...a.position },
       route: [],
       phase: t.releaseAt ? 'scheduled' : a.phase,

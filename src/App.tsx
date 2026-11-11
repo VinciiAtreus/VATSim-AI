@@ -1192,7 +1192,7 @@ export default function App() {
                   <div>
                     <span>GROUND SPEED</span>
                     <strong>
-                      {selected.speed}
+                      {Math.round(selected.speed)}
                       <small> KT</small>
                     </strong>
                   </div>

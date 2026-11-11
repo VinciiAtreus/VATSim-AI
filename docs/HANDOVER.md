@@ -1,5 +1,9 @@
 # VATSIM AI — session handover
 
+## Readability and speed follow-up
+
+Engine 0.5.1 adds screen-sized overlays, upright gate labels, 20× zoom/focus, owner-corrected telephony and generic acceleration/braking. Measured 1× taxis: MAS612 about 5m41s over 2.21 km, AXM518 about 8m42s over 3.81 km. Version 0.5.0 checkpoints remain readable with a model-change notice; historical snapshots remain unchanged. Verification: 110 unit tests, 32 Chromium browser tests, build, formatting and diff checks passed; maximum-zoom screenshots inspected. See the follow-up section in WMKK_GEOMETRY.md.
+
 ## Map update continuation, 11 November 2026
 
 The newly selected environment applied the requested chart domains and fresh requests succeeded. Charts were retrieved, including the newer 3 November 2026 CAAM edition. The map/routing update is documented in [WMKK_GEOMETRY.md](WMKK_GEOMETRY.md), with exact source hashes in [WMKK_CHART_SOURCES.json](WMKK_CHART_SOURCES.json). Engine 0.5.0 / dataset `wmkk-caam-trace-0.2` replaces the old paths together with the drawing. Existing records are retained and exportable unchanged; incompatible schematic coordinates are rejected explicitly. PR #4 remains the existing draft review vehicle, unmerged. Local checks: 100 unit tests, 30 Chromium browser tests, production build, formatting and diff checks passed; screenshots inspected. The earlier handover below is historical context.

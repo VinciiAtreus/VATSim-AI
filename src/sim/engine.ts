@@ -1,12 +1,5 @@
-import {
-  PUSHBACK,
-  STANDS,
-  departurePath,
-  ARRIVAL_PATH,
-  ARRIVAL_ROUTE,
-  ROLLOUT,
-  knotsToUnitsPerSecond,
-} from './geometry'
+import { movementStep } from './motion'
+import { PUSHBACK, STANDS, departurePath, ARRIVAL_PATH, ARRIVAL_ROUTE, ROLLOUT } from './geometry'
 import {
   AIRPORT_DATA,
   ARRIVAL_MODEL,
@@ -634,21 +627,15 @@ function integrate(session: Session, dt: number): Session {
       }
       continue
     }
-    const knots =
-      (
-        {
-          pushback: 4,
-          taxiing: 15,
-          'lining-up': 10,
-          departing: 145,
-          landing: 110,
-          'going-around': 145,
-        } as Partial<Record<Aircraft['phase'], number>>
-      )[a.phase] ?? 0
-    if (!knots) continue
-    a.speed = knots
-    const movement = knotsToUnitsPerSecond(knots)
-    advance(a, movement * dt)
+    if (
+      !['pushback', 'taxiing', 'lining-up', 'departing', 'landing', 'going-around'].includes(
+        a.phase,
+      )
+    )
+      continue
+    const movement = movementStep(a, dt)
+    a.speed = movement.speed
+    advance(a, movement.distance)
     if (a.routeIndex >= a.route.length) {
       a.speed = 0
       if (a.phase === 'lining-up') {

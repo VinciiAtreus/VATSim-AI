@@ -1,3 +1,4 @@
+import { applyTelephony } from './callsigns'
 import { AIRPORT_DATA, RADIOS, RUNWAYS, SCENARIOS } from './airport'
 import { copyAircraft } from './engine'
 import { ENGINE_VERSION } from './version'
@@ -192,10 +193,10 @@ export function decodeSession(
     )
   const legacyV1 = value.schema === 'vatsim-ai.session.v1'
   const modern = value.schema === 'vatsim-ai.session.v4'
-  const migrated = !modern
+  const migrated = !modern || value.engineVersion === '0.5.0'
   const legacyControls = legacyV1 || value.schema === 'vatsim-ai.session.v2'
   if (
-    (modern && value.engineVersion !== ENGINE_VERSION) ||
+    (modern && value.engineVersion !== ENGINE_VERSION && value.engineVersion !== '0.5.0') ||
     (value.schema === 'vatsim-ai.session.v3' && value.engineVersion !== '0.3.0') ||
     (value.schema === 'vatsim-ai.session.v2' && value.engineVersion !== '0.2.0')
   )
@@ -247,6 +248,8 @@ export function decodeSession(
   if (exercise.id !== raw.scenarioId) fail('exercise identity does not match session.')
   const ids = exercise.traffic.map((t) => t.callsign)
   const current = fleet(raw.aircraft, ids, legacyControls, modern)
+  if (value.engineVersion === '0.5.0')
+    for (const a of current) a.spoken = applyTelephony(a.id, a.spoken)
   const weather = modern ? decodeWeather(raw.weather) : { ...DEFAULT_WEATHER }
   const coordination = modern
     ? decodeCoordination(raw.coordination, ids, raw.time as number, historyLimit)

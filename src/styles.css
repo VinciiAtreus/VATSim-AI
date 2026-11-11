@@ -4466,3 +4466,16 @@ textarea:focus-visible {
   line-height: 1.7;
   margin-top: 6px;
 }
+
+.gate-map-label {
+  fill: #f2df98;
+  font-family: var(--font-mono, monospace);
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: #17352d;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.map-scale {
+  bottom: 42px;
+}

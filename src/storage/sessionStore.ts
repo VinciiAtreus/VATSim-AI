@@ -1,5 +1,5 @@
 import { sessionExport } from '../sim/engine'
-import { decodeSession } from '../sim/sessionCodec'
+import { decodeSession, forkSession } from '../sim/sessionCodec'
 import type { Session } from '../sim/types'
 
 export type SavedSession = {
@@ -94,7 +94,10 @@ export async function recoverSession(): Promise<{ session: Session | null; warni
     try {
       const decoded = decodeSession(record.envelope, 'checkpoint')
       return {
-        session: decoded.session,
+        session:
+          record.envelope.engineVersion === '0.5.0'
+            ? forkSession(decoded.session)
+            : decoded.session,
         warning:
           [
             ...(skipped

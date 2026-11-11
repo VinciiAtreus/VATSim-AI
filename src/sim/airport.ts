@@ -180,7 +180,7 @@ export function initialAircraft(scenarioId: string): Aircraft[] {
     {
       ...base,
       id: 'AXM518',
-      spoken: 'AirAsia five one eight',
+      spoken: 'Redcap five one eight',
       type: 'A320',
       wake: 'M',
       stand: 'Q4',
@@ -214,7 +214,7 @@ export function initialAircraft(scenarioId: string): Aircraft[] {
     {
       ...base,
       id: 'MXD124',
-      spoken: 'Batik one two four',
+      spoken: 'Malindo one two four',
       type: 'B738',
       wake: 'M',
       stand: 'B8',

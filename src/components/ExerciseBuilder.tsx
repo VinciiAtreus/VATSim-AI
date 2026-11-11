@@ -1,3 +1,4 @@
+import { spokenCallsign } from '../sim/callsigns'
 import { useState } from 'react'
 import { Download, Plus, Save, Upload, X } from 'lucide-react'
 import { initialAircraft } from '../sim/airport'
@@ -199,7 +200,13 @@ export default function ExerciseBuilder({
                         setDraft({
                           ...draft,
                           traffic: draft.traffic.map((a) =>
-                            a === t ? { ...a, callsign: e.target.value.toUpperCase() } : a,
+                            a === t
+                              ? {
+                                  ...a,
+                                  callsign: e.target.value.toUpperCase(),
+                                  spoken: spokenCallsign(e.target.value) ?? a.spoken,
+                                }
+                              : a,
                           ),
                         })
                       }
