@@ -1607,11 +1607,14 @@ export default function App() {
                 return
               }
               window.speechSynthesis?.cancel()
+              lastSpoken.current = 0
               const next = createSimulation()
               update(() => next)
               setSelectedId(next.aircraft[0].id)
               setFrequency(next.aircraft[0].frequency)
               setReplayIndex(null)
+              setReplayPlaying(false)
+              setCommandError('')
               setCommand('')
               setModal(null)
             }}

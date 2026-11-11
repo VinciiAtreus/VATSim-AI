@@ -25,3 +25,5 @@ Readbacks expand runway suffixes, numbered taxiways, stands and decimal frequenc
 Voice quality depends on browser/OS voices. Natural voices may require a network connection. No natural-voice availability or aviation speech accuracy is asserted from fixture tests; choose and preview the voice on the owner's Edge installation.
 
 Validation: 116 unit tests, 30 Chromium browser tests, production build, formatting and diff checks passed. Browser tests verify non-selecting pan, wheel zoom, continuous-mode controls, installed-voice selection/preview, and record recovery. Fixture tests establish voice selection and phrasing, not real-device speech quality. Superseded lesson/workshop browser flows were replaced with simulation checks; legacy backend and codec coverage remains.
+
+Starting a new simulation resets the readback event cursor and replay state. A dedicated browser regression sends readbacks in two successive simulations in the same tab, verifying that reused event IDs do not silence the second session. The four focused simulation browser checks passed after this fix.

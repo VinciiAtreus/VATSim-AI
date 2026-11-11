@@ -74,3 +74,37 @@ test('offers available voices and previews the preferred natural voice with avia
   await page.getByRole('button', { name: 'Preview pilot voice', exact: true }).click()
   expect(await page.evaluate(() => (window as any).spoken.at(-1).voice)).toBe('standard')
 })
+
+test('continues speaking new readbacks after starting a second simulation', async ({ page }) => {
+  await page.addInitScript(() => {
+    ;(window as any).spoken = []
+    ;(window as any).SpeechSynthesisUtterance = class {
+      constructor(public text: string) {}
+    }
+    Object.defineProperty(window, 'speechSynthesis', {
+      value: {
+        getVoices: () => [],
+        addEventListener() {},
+        removeEventListener() {},
+        cancel() {},
+        speak(u: any) {
+          ;(window as any).spoken.push(u.text)
+        },
+      },
+    })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
+  await page.getByRole('button', { name: 'Enable pilot readback audio' }).click()
+  const send = async () => {
+    await page.getByRole('textbox', { name: 'Controller transmission' }).fill('MAS612, standby')
+    await page.getByRole('button', { name: 'Transmit clearance' }).click()
+  }
+  for (let i = 0; i < 4; i++) await send()
+  await expect.poll(() => page.evaluate(() => (window as any).spoken.length)).toBe(4)
+  await page.getByRole('button', { name: 'Simulation setup', exact: true }).click()
+  await page.getByRole('button', { name: 'New simulation', exact: true }).click()
+  await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
+  await send()
+  await expect.poll(() => page.evaluate(() => (window as any).spoken.length)).toBe(5)
+})
