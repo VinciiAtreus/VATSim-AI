@@ -16,7 +16,12 @@ export function rotatePoint(p: Point): Point {
   }
 }
 // Work in screen-aligned SVG coordinates; expanded bounds include the full text.
-export function placeLabels(aircraft: Aircraft[], scale = 1): MapLabel[] {
+export function placeLabels(
+  aircraft: Aircraft[],
+  scale = 1,
+  project: (p: Point) => Point = rotatePoint,
+  viewport?: { width: number; height: number },
+): MapLabel[] {
   const placed: MapLabel[] = []
   const overlaps = (r: MapLabel) =>
     placed.some(
@@ -27,7 +32,7 @@ export function placeLabels(aircraft: Aircraft[], scale = 1): MapLabel[] {
         r.y + r.height + 6 > p.y,
     )
   for (const a of aircraft) {
-    const p = rotatePoint(a.position)
+    const p = project(a.position)
     const width = 122 * scale,
       height = 40 * scale
     const offsets = [
@@ -41,7 +46,14 @@ export function placeLabels(aircraft: Aircraft[], scale = 1): MapLabel[] {
       [-width - 26, -height / 2],
     ]
     let label = offsets
-      .map(([dx, dy]) => ({ id: a.id, x: p.x + dx, y: p.y + dy, width, height, compact: false }))
+      .map(([dx, dy]) => ({
+        id: a.id,
+        x: viewport ? Math.max(4, Math.min(viewport.width - width - 4, p.x + dx)) : p.x + dx,
+        y: viewport ? Math.max(4, Math.min(viewport.height - height - 4, p.y + dy)) : p.y + dy,
+        width,
+        height,
+        compact: false,
+      }))
       .find((r) => !overlaps(r))
     if (!label) {
       // Compact labels are packed in deterministic free slots outside the cluster.

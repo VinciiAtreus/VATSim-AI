@@ -8,6 +8,7 @@ import '@fontsource/ibm-plex-sans-condensed/latin-400.css'
 import '@fontsource/ibm-plex-sans-condensed/latin-600.css'
 import './styles.css'
 import './workstation/workstation.css'
+import './workstation/responsive.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

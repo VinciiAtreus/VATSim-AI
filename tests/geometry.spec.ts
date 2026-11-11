@@ -10,14 +10,14 @@ test('shows the chart trace, reveals parking detail, and resets map fit', async 
   await expect(map).toContainText('T1 SATELLITE')
   await expect(map).toContainText('T2 SATELLITE')
   const original = await map.getAttribute('viewBox')
+  await page.getByRole('button', { name: 'Focus selected aircraft' }).click()
   await page.getByRole('button', { name: 'Zoom in', exact: true }).click()
-  await page.getByRole('button', { name: 'Zoom in', exact: true }).click()
-  await expect(map).toContainText('C27')
+  await expect(page.locator('.chart-screen-label.stand').first()).toBeVisible()
   expect(await map.getAttribute('viewBox')).not.toBe(original)
   await page.getByRole('button', { name: 'Fit airport to display' }).click()
   await expect(map).toHaveAttribute('viewBox', original!)
   await page.getByRole('button', { name: 'Labels', exact: true }).click()
-  await expect(map).not.toContainText('C27')
+  await expect(page.locator('.chart-screen-label.stand')).toHaveCount(0)
 })
 
 test('keeps incompatible schematic records and exports their original envelope', async ({
