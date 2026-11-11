@@ -5,7 +5,7 @@ Reference material: the supplied **VATSIM AI Controller Workstation — UI and S
 ## Delivered
 
 - Neutral equipment palette, locally hosted IBM Plex fonts, night/day tokens, three columns at 1280 px, independent scrolling for equipment bays, stacked surface/right/strips below 900 px (DP-1/2/3/8, LAY-01/02).
-- Live system UTC, ATIS/weather controls, runway occupancy chips, one safety/system line, dashed simulator corner with run/pause, speed, reset, checkpoints and exercise selection (TOP-01–04, ALR-01–03, SIM-01/02).
+- Live system UTC, ATIS/weather controls, runway occupancy chips, one safety/system line, dashed simulator corner with run/pause, speed, reset, checkpoints and continuous-traffic setup (TOP-01–04, ALR-01–03, SIM-01/02).
 - Six paper strip bays in runway-proximity order, derived from aircraft phases; shared target/strip selection, search, fixed paper colours in both modes (EFS-01–06).
 - CAAM chart-transcribed runways/holding points, separate stand/taxiway toggles, geometric targets, leader lines, label placement with compact fallback, cleared route, automatic stop bars, pan/zoom and approach display (SMD-01–04/06–11, APP-01–03, SB-01/02). Target sizes and label sizes compensate for SVG scale. The airfield retains its chart-transcribed, unvalidated notice; fit, focus, wheel zoom, metric scale and parking detail are preserved.
 - Selected-aircraft phase ladder and clearance buttons that transmit directly; optional phrase-only training prepares text for PTT.

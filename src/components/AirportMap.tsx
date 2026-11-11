@@ -42,7 +42,7 @@ export default function AirportMap({
     const observer = new ResizeObserver(([entry]) =>
       setCanvasSize(Math.min(entry.contentRect.width, entry.contentRect.height)),
     )
-    if (svgRef.current) observer.observe(svgRef.current)
+    if (svgRef.current?.parentElement) observer.observe(svgRef.current.parentElement)
     return () => observer.disconnect()
   }, [])
   const [zoom, setZoom] = useState(1)

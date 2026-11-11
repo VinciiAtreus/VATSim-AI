@@ -56,19 +56,10 @@ import { MAX_SESSION_BYTES, decodeSession, forkSession, parseSessionFile } from 
 import { listSessions, type SavedSession } from './storage/sessionStore'
 import { ENGINE_VERSION } from './sim/version'
 import { AIRPORT_DATA, PHASE_LABELS, RADIOS, RUNWAYS, SCENARIOS } from './sim/airport'
-import {
-  createSession,
-  formatTime,
-  instructorEvent,
-  record,
-  sessionExport,
-  tick,
-  transmit,
-} from './sim/engine'
+import { formatTime, instructorEvent, record, sessionExport, tick, transmit } from './sim/engine'
 import type { Aircraft, Frequency, RunwayId, Session } from './sim/types'
 
-type Modal =
-  'simulation' | 'scenarios' | 'reference' | 'debrief' | 'settings' | 'sessions' | 'restore' | null
+type Modal = 'simulation' | 'reference' | 'debrief' | 'settings' | 'sessions' | 'restore' | null
 type Action = { label: string; text: string; primary?: boolean }
 
 function actionsFor(a: Aircraft): Action[] {
@@ -242,7 +233,6 @@ export default function App() {
     window.speechSynthesis.speak(utterance)
   }
 
-  const [confirmScenario, setConfirmScenario] = useState<string | null>(null)
   const commandInput = useRef<HTMLInputElement>(null)
   const transcriptEnd = useRef<HTMLDivElement>(null)
   const lastSpoken = useRef(0)
@@ -324,7 +314,6 @@ export default function App() {
     const handle = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setModal(null)
-        setConfirmScenario(null)
         return
       }
       if (
@@ -481,9 +470,14 @@ export default function App() {
   useEffect(() => () => clearTimeout(busyTimer.current), [])
   const alerts = safetyAlerts(session)
   const alertHistory = useRef<Map<string, string>>(new Map())
+  const alertSessionId = useRef(session.id)
   const alertSignature = alerts.map((a) => `${a.id}:${a.level}`).join('|')
   useEffect(() => {
     if (!ready || replayIndex !== null) return
+    if (alertSessionId.current !== session.id) {
+      alertSessionId.current = session.id
+      alertHistory.current = new Map()
+    }
     const current = new Map(alerts.map((a) => [a.id, a.level]))
     const started = alerts.filter((a) => alertHistory.current.get(a.id) !== a.level)
     const ended = [...alertHistory.current.keys()].filter((id) => !current.has(id))
@@ -500,26 +494,6 @@ export default function App() {
       return next
     })
   }, [alertSignature, ready, replayIndex, update, session.id])
-  async function loadScenario(id: string) {
-    if (!ready) return
-    if ((session.time > 0 || session.attempted > 0) && confirmScenario !== id) {
-      setConfirmScenario(id)
-      return
-    }
-    await saveNow()
-    window.speechSynthesis?.cancel()
-    lastSpoken.current = 0
-    const next = enableContinuous(createSession(id))
-    update(() => next)
-    setSelectedId('MAS612')
-    setFrequency('121.650')
-    setReplayIndex(null)
-    setCommand('')
-    setCommandError('')
-    setModal(null)
-    setConfirmScenario(null)
-    setToast('Exercise loaded. Review the briefing, then start when ready.')
-  }
   async function openLibrary() {
     if (!ready) return
     if (stateRef.current.running)
@@ -567,11 +541,13 @@ export default function App() {
     if (!pendingRestore) return
     await saveNow()
     const next = record(
-      forkSession(pendingRestore.session),
+      pendingRestore.session.simulation
+        ? forkSession(pendingRestore.session)
+        : enableContinuous(forkSession(pendingRestore.session)),
       'system',
       pendingRestore.migrated
-        ? 'Legacy record migrated to the current model with scripted pilots. Restored as a separate paused exercise.'
-        : 'Exercise restored as a separate paused copy. Original checkpoint preserved.',
+        ? 'Legacy record migrated to the current model. Existing pilot controls are retained where supported. Restored as a separate paused session.'
+        : 'Session restored as a separate paused copy. Original checkpoint preserved.',
     )
     window.speechSynthesis?.cancel()
     lastSpoken.current = next.nextEventId - 1
@@ -579,11 +555,12 @@ export default function App() {
     setSelectedId(next.aircraft[0].id)
     setFrequency(next.aircraft[0].frequency)
     setReplayIndex(null)
+    setReplayPlaying(false)
     setCommand('')
     setCommandError('')
     setPendingRestore(null)
     setModal(null)
-    setToast('Exercise restored paused. Resume when ready.')
+    setToast('Session restored paused. Resume when ready.')
   }
   function exportSession() {
     const blob = new Blob(
@@ -739,16 +716,6 @@ export default function App() {
             <details>
               <summary aria-label="Simulator menu">Menu</summary>
               <div>
-                <button
-                  aria-label="Choose exercise"
-                  onClick={(e) => {
-                    e.currentTarget.closest('details')?.removeAttribute('open')
-                    setConfirmScenario(null)
-                    setModal('scenarios')
-                  }}
-                >
-                  {scenario.title}
-                </button>
                 <button onClick={exportSession}>Download JSON</button>
               </div>
             </details>
@@ -1454,7 +1421,7 @@ export default function App() {
       )}
       {modal === 'restore' && pendingRestore && (
         <ModalShell
-          title="Restore this exercise?"
+          title="Restore this session?"
           eyebrow="REVIEW SESSION RECORD"
           onClose={() => setModal('sessions')}
         >
@@ -1485,22 +1452,22 @@ export default function App() {
             </dl>
           </div>
           <p className="modal-intro">
-            This opens a separate copy with the clock paused. The current exercise is checkpointed
+            This opens a separate copy with the clock paused. The current session is checkpointed
             first if browser storage is available. Existing checkpoints are preserved.
           </p>
           {pendingRestore.migrated && (
             <div className="migration-notice">
               <Info size={16} />
               <p>
-                This legacy record will use the current model with scripted pilots. Version 0.1
-                airborne landing states also adopt the moving-arrival model. Historical snapshots
-                remain as originally recorded.
+                This legacy record will use the current model. Existing pilot controls are retained
+                where supported. Version 0.1 airborne landing states also adopt the moving-arrival
+                model. Historical snapshots remain as originally recorded.
               </p>
             </div>
           )}
           {saveStatus.error && (
             <div className="library-error" role="alert">
-              Local storage is unavailable. Export the current exercise before replacing it if you
+              Local storage is unavailable. Export the current session before replacing it if you
               need a copy.
             </div>
           )}
@@ -1513,74 +1480,6 @@ export default function App() {
               Restore paused
             </button>
           </div>
-        </ModalShell>
-      )}
-      {modal === 'scenarios' && (
-        <ModalShell
-          title="Choose your exercise"
-          eyebrow="WMKK TRAINING LIBRARY"
-          onClose={() => {
-            setModal(null)
-            setConfirmScenario(null)
-          }}
-          wide
-        >
-          <p className="modal-intro">
-            Focused exercises for developing the controller workflow. Each uses the same
-            illustrative airport dataset.
-          </p>
-          <div className="scenario-cards">
-            {SCENARIOS.map((s) => (
-              <button
-                key={s.id}
-                className={`scenario-card ${s.id === session.scenarioId ? 'current' : ''}`}
-                onClick={() => loadScenario(s.id)}
-              >
-                <div className={`scenario-art art-${s.id}`}>
-                  <div className="mini-runway" />
-                  <div className="mini-runway second" />
-                  <Plane size={22} />
-                  <span>{s.code}</span>
-                </div>
-                <div className="scenario-card-content">
-                  <span className="eyebrow">{s.category}</span>
-                  <h3>{s.title}</h3>
-                  <p>{s.description}</p>
-                  <div className="scenario-meta">
-                    <span>
-                      <Clock3 size={12} />
-                      {s.duration}
-                    </span>
-                    <span>
-                      <Plane size={12} />
-                      {s.traffic}
-                    </span>
-                  </div>
-                  <span className="scenario-load">
-                    {confirmScenario === s.id
-                      ? 'Confirm reset & load exercise'
-                      : s.id === session.scenarioId
-                        ? 'Restart this exercise'
-                        : 'Load exercise'}
-                    <ArrowRight size={15} />
-                  </span>
-                </div>
-              </button>
-            ))}
-          </div>
-          {confirmScenario && (
-            <div className="reset-notice">
-              <TriangleAlert size={16} />
-              <span>
-                Loading an exercise resets this session. Export the current history first if you
-                need to keep it.
-              </span>
-              <button className="text-button" onClick={exportSession}>
-                Export first
-                <Download size={13} />
-              </button>
-            </div>
-          )}
         </ModalShell>
       )}
       {modal === 'simulation' && (
@@ -2053,8 +1952,7 @@ export default function App() {
             <button
               className="secondary-button"
               onClick={() => {
-                setModal('scenarios')
-                setConfirmScenario(session.scenarioId)
+                setModal('simulation')
               }}
             >
               <RotateCcw size={15} />

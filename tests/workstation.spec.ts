@@ -136,7 +136,7 @@ test('scenario selection, instructor event, search, and export are functional', 
   await page.goto('/')
   await page.getByRole('button', { name: 'Operations', exact: true }).click()
   await page.getByRole('button', { name: /Runway obstruction/ }).click()
-  await expect(page.getByText('RWY OCCUPIED', { exact: true })).toBeVisible()
+  await expect(page.locator('.safety-line')).toContainText('RWY OCCUPIED')
   await page.getByRole('textbox', { name: 'Search flight strips' }).fill('AXM')
   await expect(page.getByRole('button', { name: 'Select AXM518' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Select MAS612' })).toHaveCount(0)
@@ -354,9 +354,9 @@ test('browser history beyond the file-import limit can recover and restore indep
   await expect(
     page.getByText('Previous session restored paused. Resume when you are ready.'),
   ).toBeVisible()
-  await expect(
-    page.getByRole('button', { name: /WMKK · CONTINUOUS Airport operations/ }),
-  ).toBeVisible()
+  await page.getByRole('button', { name: 'Simulation setup', exact: true }).click()
+  await expect(page.getByLabel('Automatic traffic')).toBeEnabled()
+  await page.getByRole('button', { name: 'Close dialog' }).click()
   await page.getByRole('button', { name: 'Saved sessions', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText(`${long.events.length + 1} events`)
   await page.getByRole('button', { name: 'Restore Departure fundamentals', exact: true }).click()
@@ -413,9 +413,9 @@ test('recovers a version 0.2 checkpoint with a migration notice and scripted def
   await expect(
     page.getByText(/Legacy checkpoint migrated to the current model; restored paused/),
   ).toBeVisible()
-  await expect(
-    page.getByRole('button', { name: /WMKK · CONTINUOUS Airport operations/ }),
-  ).toBeVisible()
+  await page.getByRole('button', { name: 'Simulation setup', exact: true }).click()
+  await expect(page.getByLabel('Automatic traffic')).toBeEnabled()
+  await page.getByRole('button', { name: 'Close dialog' }).click()
   await page.getByRole('button', { name: 'Operations', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Take over MAS612', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Start simulation', exact: true })).toBeEnabled()
