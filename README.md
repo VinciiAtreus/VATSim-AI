@@ -22,3 +22,9 @@ npm run format:check
 Voice input creates a text draft and requires explicit transmit. Readback Settings let you choose and preview installed English voices; natural voices depend on the browser/OS and may use its network service. No audio is recorded.
 
 Legacy session data and local lesson storage are retained for compatibility; course-authoring/scoring screens are no longer part of the simulator. Old schematic coordinates remain explicitly incompatible with the chart dataset and are exportable unchanged from the archive.
+
+## Workstation overhaul
+
+The equipment layout adds paper strip bays, a final approach view, runway occupancy and stop-bar indications, and Day/Night modes. The dashed Simulator corner contains run/pause, speed, setup and saved sessions. **P** runs/pauses; Space no longer pauses.
+
+The **Dictate** button retains the reviewed-draft workflow. Optional **Browser speech recognition** in Settings enables hold-to-send PTT: hold Right Ctrl (Right Option on macOS), speak, then release. Chrome may process speech in the cloud. With browser speech disabled, PTT sends the text explicitly entered in the R/T log. Bindings and optional latching PTT are configurable. See [implementation and remaining acceptance work](docs/OVERHAUL_IMPLEMENTATION.md).

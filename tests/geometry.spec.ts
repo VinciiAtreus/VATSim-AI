@@ -79,7 +79,7 @@ test('keeps aircraft cards and scale compact while gate labels remain upright at
   await page.goto('/')
   await page.getByRole('button', { name: 'Select AXM518' }).click()
   await page.getByRole('button', { name: 'Focus selected aircraft' }).click()
-  const card = page.locator('[data-aircraft="AXM518"] rect')
+  const card = page.locator('[data-aircraft="AXM518"] .target-label-box')
   const before = (await card.boundingBox())!
   await page.getByRole('button', { name: 'Zoom in', exact: true }).click()
   await page.getByRole('button', { name: 'Zoom in', exact: true }).click()

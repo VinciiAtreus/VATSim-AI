@@ -26,6 +26,7 @@ export type Aircraft = {
   destination: string
   operation: 'departure' | 'arrival'
   phase: Phase
+  heldFrom?: Phase
   position: Point
   heading: number
   speed: number
@@ -90,6 +91,7 @@ export type EventKind =
 export type SimEvent = {
   id: number
   time: number
+  utc?: string
   kind: EventKind
   aircraftId?: string
   text: string
@@ -113,6 +115,7 @@ export type Session = {
   id: string
   scenarioId: string
   time: number
+  tickRemainder?: number
   running: boolean
   speed: 1 | 2 | 4
   aircraft: Aircraft[]
@@ -134,6 +137,9 @@ export type Command =
   | { type: 'pushback'; aircraftId: string }
   | { type: 'taxi'; aircraftId: string; runway: RunwayId; via: string }
   | { type: 'hold'; aircraftId: string }
+  | { type: 'continue'; aircraftId: string }
+  | { type: 'holdshort'; aircraftId: string; runway: RunwayId }
+  | { type: 'sayagain'; aircraftId: string }
   | { type: 'handoff'; aircraftId: string; frequency: Frequency }
   | { type: 'lineup'; aircraftId: string; runway: RunwayId }
   | { type: 'takeoff'; aircraftId: string; runway: RunwayId }

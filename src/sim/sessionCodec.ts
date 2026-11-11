@@ -96,6 +96,11 @@ function aircraft(
   )
     fail('invalid aircraft control state.')
   if (
+    a.heldFrom !== undefined &&
+    !['ready', 'pushback', 'taxiing', 'holding'].includes(a.heldFrom as string)
+  )
+    fail('invalid held state.')
+  if (
     a.discrepancy !== undefined &&
     (!object(a.discrepancy) ||
       !runway(a.discrepancy.issued) ||
@@ -132,6 +137,7 @@ function aircraft(
     destination: a.destination,
     operation: a.operation as Aircraft['operation'],
     phase: a.phase as Aircraft['phase'],
+    heldFrom: a.heldFrom as Aircraft['heldFrom'],
     position: { x: (a.position as Obj).x as number, y: (a.position as Obj).y as number },
     heading: a.heading,
     speed: a.speed,
@@ -370,6 +376,10 @@ export function decodeSession(
     return {
       id: item.id,
       time: item.time,
+      utc:
+        typeof item.utc === 'string' && Number.isFinite(Date.parse(item.utc))
+          ? item.utc
+          : undefined,
       kind: item.kind as SimEvent['kind'],
       severity: item.severity as SimEvent['severity'],
       text: item.text,
@@ -482,6 +492,7 @@ export function decodeSession(
       id: legacyV1 ? crypto.randomUUID() : (raw.id as string),
       scenarioId: raw.scenarioId as string,
       time: raw.time,
+      tickRemainder: finite(raw.tickRemainder, 0, 0.1) ? raw.tickRemainder : 0,
       running: false,
       speed: raw.speed as Session['speed'],
       aircraft: current,

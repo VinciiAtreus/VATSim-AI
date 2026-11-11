@@ -37,7 +37,6 @@ test('coordinates with a manual adjacent station before transferring radio owner
   await page.getByRole('button', { name: 'Restore paused', exact: true }).click()
   await page.getByRole('button', { name: 'Resume simulation' }).click()
   await page.getByRole('button', { name: 'Transfer to tower', exact: true }).click()
-  await page.getByRole('button', { name: 'Transmit clearance' }).click()
   await expect(page.getByRole('alert')).toContainText('Exercise coordination required')
   await page
     .getByRole('button', { name: 'Request adjacent-station acceptance', exact: true })
@@ -47,7 +46,6 @@ test('coordinates with a manual adjacent station before transferring radio owner
   await page.getByRole('button', { name: 'Aircraft', exact: true }).click()
   await expect(page.getByLabel('Adjacent station coordination')).toContainText('approved')
   await page.getByRole('button', { name: 'Transfer to tower', exact: true }).click()
-  await page.getByRole('button', { name: 'Transmit clearance' }).click()
   await expect(page.getByRole('button', { name: 'Select MAS612' })).toContainText('118.800')
 })
 

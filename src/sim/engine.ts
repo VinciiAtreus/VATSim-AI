@@ -8,6 +8,7 @@ import {
   arrivalDecisionSeconds,
   pilotRequest,
   RUNWAYS,
+  PHASE_LABELS,
 } from './airport'
 import { builtinExercise, decodeExercise, decodeWeather, exerciseAircraft } from './exercises'
 import { parseTransmission } from './parser'
@@ -45,6 +46,7 @@ export function record(
   const event: SimEvent = {
     id: session.nextEventId,
     time: session.time,
+    utc: new Date().toISOString(),
     kind,
     text,
     severity: 'info',
@@ -203,6 +205,14 @@ function validate(s: Session, a: Aircraft, c: Command, frequency: Frequency): st
       return !['ready', 'pushback', 'taxiing', 'stopped', 'holding'].includes(a.phase)
         ? 'Hold position is available for aircraft on the ground outside the runway.'
         : null
+    case 'continue':
+      return a.phase !== 'stopped' || !a.heldFrom || a.discrepancy
+        ? 'Continue taxi requires a held aircraft with a cleared route and no unresolved readback.'
+        : null
+    case 'holdshort':
+      return !['taxiing', 'holding'].includes(a.phase)
+        ? 'Hold short requires an aircraft taxiing to or at its holding point.'
+        : null
     case 'handoff': {
       const target = a.operation === 'departure' ? r.frequency : r.ground
       if (c.frequency !== target)
@@ -284,6 +294,13 @@ export function transmit(
   const error = validate(s, a, c, frequency)
   if (error) {
     s = record(s, 'instructor', error, { aircraftId: a.id, severity: 'attention' })
+    if (frequency === a.frequency && a.pilotMode === 'scripted')
+      s = record(
+        s,
+        'pilot',
+        `Confirm instruction? We are ${PHASE_LABELS[a.phase].toLowerCase()}, ${a.spoken}.`,
+        { aircraftId: a.id, frequency },
+      )
     return { session: s, error }
   }
   if (a.pilotMode === 'operator') {
@@ -334,10 +351,26 @@ function applyCommand(
       break
     }
     case 'hold':
+      if (a.phase !== 'stopped') a.heldFrom = a.phase
       a.phase = 'stopped'
       a.speed = 0
       a.clearance = 'Hold position'
       readback = `Holding position, ${a.spoken}.`
+      break
+    case 'continue':
+      a.phase = a.heldFrom!
+      delete a.heldFrom
+      a.clearance = 'Continue taxi'
+      readback = `Continue taxi, ${a.spoken}.`
+      break
+    case 'holdshort':
+      a.clearance = `Hold short runway ${a.runway}`
+      readback = `Holding short runway ${a.runway}, ${a.spoken}.`
+      break
+    case 'sayagain':
+      readback =
+        s.events.filter((e) => e.kind === 'pilot' && e.aircraftId === a.id).at(-1)?.text ??
+        pilotRequest(a)
       break
     case 'handoff': {
       a.frequency = c.frequency
@@ -610,7 +643,7 @@ function beginAutomaticGoAround(s: Session, a: Aircraft, reason: string): Sessio
 function integrate(session: Session, dt: number): Session {
   let s: Session = {
     ...session,
-    time: session.time + dt,
+    time: Math.round((session.time + dt) * 1e6) / 1e6,
   }
   for (const trigger of s.exercise.triggers) {
     if (trigger.at > s.time || s.firedTriggers.includes(trigger.id)) continue
@@ -661,7 +694,10 @@ function integrate(session: Session, dt: number): Session {
       a.speed = 130
       a.position = {
         x: runway.x,
-        y: Math.max(runway.bottom, a.position.y - ARRIVAL_MODEL.approachSpeed * dt),
+        y: Math.max(
+          runway.bottom,
+          Math.round((a.position.y - ARRIVAL_MODEL.approachSpeed * dt) * 1e6) / 1e6,
+        ),
       }
       if (
         !a.landingCleared &&
@@ -752,13 +788,15 @@ function integrate(session: Session, dt: number): Session {
 
 export function tick(session: Session, delta: number): Session {
   if (!session.running || delta <= 0 || !Number.isFinite(delta)) return session
-  let s = { ...session, aircraft: copyAircraft(session.aircraft) }
-  let remaining = Math.min(delta * session.speed, 3600)
-  // Substeps prevent an accelerated clock from skipping an approach decision or phase transition.
-  while (remaining > 0.000001) {
-    const step = Math.min(remaining, 1)
-    s = replenishTraffic(integrate(s, step))
-    remaining -= step
+  const total = Math.min(delta * session.speed, 3600) + (session.tickRemainder ?? 0)
+  const steps = Math.floor((total + 1e-9) * 10)
+  let s = {
+    ...session,
+    aircraft: copyAircraft(session.aircraft),
+    tickRemainder: Math.max(0, total - steps / 10),
+  }
+  for (let step = 0; step < steps; step++) {
+    s = replenishTraffic(integrate(s, 0.1)) as typeof s
   }
   return s
 }
