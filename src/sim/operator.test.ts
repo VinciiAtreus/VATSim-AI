@@ -21,8 +21,8 @@ describe('instructor pseudo-pilot control', () => {
   it('does not consume a scripted readback injection during manual execution', () => {
     let s = setPilotMode({ ...createSession('readback'), running: true }, 'MAS612', 'operator')
     s = transmit(s, 'MAS612, pushback approved', '121.650').session
-    s = tick(resolvePilotInstruction(s, 'MAS612', true).session, 35)
-    s = transmit(s, 'MAS612, taxi runway 32R via A', '121.650').session
+    s = tick(resolvePilotInstruction(s, 'MAS612', true).session, 150)
+    s = transmit(s, 'MAS612, taxi runway 32R via T2 T3 F1 G B9 A A11', '121.650').session
     s = resolvePilotInstruction(s, 'MAS612', true).session
     expect(s.injectReadback).toBe(true)
     expect(s.aircraft[0].phase).toBe('taxiing')

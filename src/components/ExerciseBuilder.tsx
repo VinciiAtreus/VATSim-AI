@@ -90,8 +90,8 @@ export default function ExerciseBuilder({
     <div className="exercise-builder">
       <p className="modal-intro">
         Author a local lesson using the four modelled traffic profiles. Geometry, routes, and
-        performance remain schematic. Weather changes the briefing and display; it does not model
-        visibility, aerodynamics, or automatic runway selection.
+        performance remain simplified and professionally unvalidated. Weather changes the briefing
+        and display; it does not model visibility, aerodynamics, or automatic runway selection.
       </p>
       <div className="builder-toolbar">
         <label className="secondary-button">

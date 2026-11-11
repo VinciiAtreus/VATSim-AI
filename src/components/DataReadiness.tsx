@@ -16,7 +16,7 @@ export default function DataReadiness({ exercise }: { exercise: ExerciseDefiniti
         </div>
         <div>
           <dt>Airport dataset</dt>
-          <dd>{AIRPORT_DATA.id} · illustrative, unverified</dd>
+          <dd>{AIRPORT_DATA.id} · chart-transcribed, professionally unvalidated</dd>
         </div>
         <div>
           <dt>Lesson</dt>
@@ -32,15 +32,17 @@ export default function DataReadiness({ exercise }: { exercise: ExerciseDefiniti
       <ul className="source-readiness">
         <li>
           <a
-            href="https://aip.caam.gov.my/aip/eAIP/2026-08-06-AIRAC/html/eAIP/WM-AD-2.WMKK-en-MS.html"
+            href="https://aip.caam.gov.my/aip/eAIP/2026-11-03/html/eAIP/WM-AD-2.WMKK-en-MS.html"
             target="_blank"
             rel="noreferrer"
           >
-            WMKK AD 2 reference edition · 6 August 2026
+            WMKK AD 2 reference edition · 3 November 2026
           </a>
           <span>
-            Current effective baseline, geometry, routes, sectors and restrictions require
-            reconciliation and expert review.
+            Geometry traced from AD 2-WMKK-2-21, 2-7 and 2-15; cross-checked against their 3
+            November 2026 editions. Published ETE/WSS taxi sequences implemented for the four
+            existing profiles. Current applicability, routes, sectors and restrictions require
+            expert review.
           </span>
         </li>
         <li>

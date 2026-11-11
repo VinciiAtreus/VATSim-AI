@@ -76,3 +76,7 @@ Review a branch preview before merging to the production branch. An actual Verce
 - [Architecture and hosting](docs/ARCHITECTURE.md)
 
 VATSIM AI is a working project name. This prototype makes no claim of affiliation with VATSIM, CAAM, Malaysia Airports, or TowerLine. All exercise flight identities and weather are fictional.
+
+## Chart geometry update (0.5.0)
+
+The airport map and aircraft routing now share the `wmkk-caam-trace-0.2` dataset. [Review sources, supported routes, record compatibility and validation limits](docs/WMKK_GEOMETRY.md). The CAAM chart trace is manually digitised and professionally unvalidated. Existing schematic records remain stored and exportable unchanged.

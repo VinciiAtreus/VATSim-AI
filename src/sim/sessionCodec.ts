@@ -187,7 +187,9 @@ export function decodeSession(
   )
     fail('unsupported file format. Choose an exported VATSIM AI session.')
   if (value.dataset !== AIRPORT_DATA.id)
-    fail('this airport dataset is not supported by the current build.')
+    fail(
+      'this airport dataset is incompatible with the chart-transcribed map. Original records are preserved; use the previous build to replay schematic sessions.',
+    )
   const legacyV1 = value.schema === 'vatsim-ai.session.v1'
   const modern = value.schema === 'vatsim-ai.session.v4'
   const migrated = !modern

@@ -32,9 +32,9 @@ function send(s: Session, text: string, f = '121.650') {
 function holding() {
   let s = createSession('', definition())
   s = send(s, 'MAS612, pushback approved')
-  s = tick({ ...s, running: true }, 35)
-  s = send(s, 'MAS612, taxi runway 32R via A')
-  return tick(s, 140)
+  s = tick({ ...s, running: true }, 150)
+  s = send(s, 'MAS612, taxi runway 32R via T2 T3 F1 G B9 A A11')
+  return tick(s, 650)
 }
 
 describe('authored exercises and integrated runtime', () => {

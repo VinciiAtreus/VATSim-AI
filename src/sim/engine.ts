@@ -1,4 +1,13 @@
 import {
+  PUSHBACK,
+  STANDS,
+  departurePath,
+  ARRIVAL_PATH,
+  ARRIVAL_ROUTE,
+  ROLLOUT,
+  knotsToUnitsPerSecond,
+} from './geometry'
+import {
   AIRPORT_DATA,
   ARRIVAL_MODEL,
   arrivalDecisionSeconds,
@@ -81,7 +90,7 @@ export function createSession(scenarioId = 'morning', definition?: ExerciseDefin
   s = record(
     s,
     'system',
-    'Exercise loaded. Illustrative WMKK dataset; procedural validation pending.',
+    'Exercise loaded. Chart-transcribed WMKK dataset; procedural validation pending.',
   )
   for (const a of s.aircraft.filter((a) => a.phase !== 'scheduled'))
     s = record(s, 'pilot', pilotRequest(a, s.weather.information), {
@@ -121,6 +130,7 @@ function validate(s: Session, a: Aircraft, c: Command, frequency: Frequency): st
     case 'taxi':
       if (!['ready', 'stopped', 'taxiing'].includes(a.phase) || a.operation !== 'departure')
         return 'Aircraft must be ready to taxi. Approve pushback first if it is at stand.'
+      if (!r.route) return 'Departure routing for this runway is not supported by this dataset.'
       if (c.via !== r.route)
         return `Demonstration route to runway ${a.runway} is via ${r.route}. Other routes have not been modelled.`
       return null
@@ -174,8 +184,8 @@ function validate(s: Session, a: Aircraft, c: Command, frequency: Frequency): st
       return a.phase !== 'vacated' ||
         a.frequency !== r.ground ||
         c.stand !== a.stand ||
-        c.via !== 'C'
-        ? `Taxi to stand requires runway vacated, ground frequency ${r.ground}, and the demonstration route to ${a.stand} via C.`
+        c.via !== ARRIVAL_ROUTE
+        ? `Taxi to stand requires runway vacated, ground frequency ${r.ground}, and the demonstration route to ${a.stand} via ${ARRIVAL_ROUTE}.`
         : null
     case 'correct':
       return !a.discrepancy ? 'There is no outstanding readback discrepancy to correct.' : null
@@ -239,13 +249,12 @@ function applyCommand(
   switch (c.type) {
     case 'pushback':
       a.phase = 'pushback'
-      setRoute(a, [{ x: a.position.x - 45, y: a.position.y }])
+      setRoute(a, [{ ...PUSHBACK[a.stand as keyof typeof PUSHBACK] }])
       a.clearance = 'Pushback approved'
       readback = `Pushback approved, ${a.spoken}.`
       break
     case 'taxi': {
-      const taxiX = r.hold.x
-      setRoute(a, [{ x: taxiX, y: a.position.y }, { ...r.hold }])
+      setRoute(a, departurePath(a.stand, a.runway, a.position))
       a.clearance = `Taxi via ${c.via} · hold short ${a.runway}`
       if (s.injectReadback && a.pilotMode === 'scripted') {
         const wrong: RunwayId = a.runway === '32R' ? '32L' : '32R'
@@ -286,7 +295,7 @@ function applyCommand(
       a.clearance = `Cleared for takeoff · runway ${a.runway}`
       setRoute(a, [
         { x: r.x, y: r.top },
-        { x: r.x, y: -110 },
+        { x: r.x, y: r.top - 200 },
       ])
       readback = `Runway ${a.runway}, cleared for takeoff, ${a.spoken}.`
       break
@@ -299,17 +308,14 @@ function applyCommand(
       a.phase = 'going-around'
       a.landingCleared = false
       a.clearance = 'Go around'
-      setRoute(a, [{ x: r.x, y: -110 }])
+      setRoute(a, [{ x: r.x, y: r.top - 200 }])
       readback = `Going around, ${a.spoken}.`
       break
     case 'gate':
       a.phase = 'taxiing'
-      a.clearance = `Taxi to stand ${a.stand} via C`
-      setRoute(a, [
-        { x: 640, y: 440 },
-        { x: 770, y: 440 },
-      ])
-      readback = `Taxi to stand ${a.stand} via C, ${a.spoken}.`
+      a.clearance = `Taxi to stand ${a.stand} via ${ARRIVAL_ROUTE}`
+      setRoute(a, [...ARRIVAL_PATH, STANDS.B10])
+      readback = `Taxi to stand ${a.stand} via ${ARRIVAL_ROUTE}, ${a.spoken}.`
       break
     case 'standby':
       a.clearance = 'Standby'
@@ -526,7 +532,7 @@ function beginAutomaticGoAround(s: Session, a: Aircraft, reason: string): Sessio
   a.runwayOccupied = false
   a.pending = false
   a.clearance = 'Go around'
-  setRoute(a, [{ x: RUNWAYS[a.runway].x, y: -110 }])
+  setRoute(a, [{ x: RUNWAYS[a.runway].x, y: RUNWAYS[a.runway].top - 200 }])
   s = routinePilotReport(s, a, `${a.spoken}, going around, ${reason}.`)
   return record(
     s,
@@ -620,28 +626,28 @@ function integrate(session: Session, dt: number): Session {
         a.phase = 'landing'
         a.runwayOccupied = true
         a.speed = 110
-        setRoute(a, [
-          { x: runway.x, y: 290 },
-          { x: runway.x + 60, y: 290 },
-        ])
+        setRoute(
+          a,
+          ROLLOUT.map((p) => ({ ...p })),
+        )
         s = record(s, 'system', `${a.id}: touchdown on runway ${a.runway}.`, { aircraftId: a.id })
       }
       continue
     }
-    const movement =
+    const knots =
       (
         {
-          pushback: 1.5,
-          taxiing: 4,
-          'lining-up': 3,
-          departing: 40,
-          landing: 24,
-          'going-around': 35,
+          pushback: 4,
+          taxiing: 15,
+          'lining-up': 10,
+          departing: 145,
+          landing: 110,
+          'going-around': 145,
         } as Partial<Record<Aircraft['phase'], number>>
       )[a.phase] ?? 0
-    if (!movement) continue
-    a.speed =
-      a.phase === 'taxiing' ? 15 : a.phase === 'pushback' ? 4 : a.phase === 'landing' ? 110 : 145
+    if (!knots) continue
+    a.speed = knots
+    const movement = knotsToUnitsPerSecond(knots)
     advance(a, movement * dt)
     if (a.routeIndex >= a.route.length) {
       a.speed = 0
@@ -741,7 +747,7 @@ export function sessionExport(s: Session) {
     exportedAt: new Date().toISOString(),
     dataset: AIRPORT_DATA.id,
     limitations: [
-      'Illustrative geometry',
+      'Manually chart-transcribed geometry; professional validation pending',
       'Simplified kinematics',
       'Scripted or human-operated pilots; optional browser speech drafts',
       'Not validated or approved for professional training',

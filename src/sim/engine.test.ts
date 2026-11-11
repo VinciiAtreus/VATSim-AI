@@ -1,3 +1,4 @@
+import { RUNWAYS, ARRIVAL_MODEL } from './airport'
 import { describe, expect, it } from 'vitest'
 import { createSession, instructorEvent, sessionExport, tick, transmit } from './engine'
 import { parseTransmission } from './parser'
@@ -13,9 +14,9 @@ function advance(s: Session, seconds: number) {
 }
 function atHoldingPoint(s = createSession('departure')) {
   s = send(s, 'MAS612, pushback approved')
-  s = advance(s, 35)
-  s = send(s, 'MAS612, taxi runway 32R via A, hold short runway 32R')
-  return advance(s, 140)
+  s = advance(s, 150)
+  s = send(s, 'MAS612, taxi runway 32R via T2 T3 F1 G B9 A A11, hold short runway 32R')
+  return advance(s, 650)
 }
 function linedUp(s = atHoldingPoint()) {
   s = send(s, 'MAS612, contact Lumpur Tower 118.800')
@@ -44,10 +45,10 @@ describe('radio interpretation', () => {
     })
   })
   it.each([
-    'taxi runway 32R via A',
+    'taxi runway 32R via T2 T3 F1 G B9 A A11',
     'MAS9999, standby',
     'MAS612 AXM518 standby',
-    'MAS612, taxi runway 32R via A, hold short runway 32L',
+    'MAS612, taxi runway 32R via T2 T3 F1 G B9 A A11, hold short runway 32L',
     'MAS612, contact Ground 118.800',
     'MAS612, runway 32R cleared for takeoff and turn left heading 180',
   ])('does not invent a command from ambiguous or unsupported input: %s', (input) => {
@@ -59,19 +60,19 @@ describe('departure workflow', () => {
   it('completes stand → pushback → taxi → tower → line up → departure', () => {
     let s = atHoldingPoint()
     expect(s.aircraft[0].phase).toBe('holding')
-    expect(s.aircraft[0].position).toEqual({ x: 870, y: 600 })
+    expect(s.aircraft[0].position).toEqual(RUNWAYS['32R'].hold)
     s = linedUp(s)
     expect(s.aircraft[0].phase).toBe('lined-up')
     expect(s.aircraft[0].runwayOccupied).toBe(true)
     s = send(s, 'MAS612, runway 32R cleared for takeoff', '118.800')
-    s = advance(s, 30)
+    s = advance(s, 120)
     expect(s.aircraft[0].phase).toBe('complete')
     expect(s.aircraft[0].runwayOccupied).toBe(false)
     expect(s.completed).toBe(1)
   })
   it('does not taxi an aircraft that has not completed pushback', () => {
     const s = createSession()
-    const result = transmit(s, 'MAS612, taxi runway 32R via A', '121.650')
+    const result = transmit(s, 'MAS612, taxi runway 32R via T2 T3 F1 G B9 A A11', '121.650')
     expect(result.error).toMatch(/pushback/)
     expect(result.session.aircraft).toEqual(s.aircraft)
     expect(result.session.accepted).toBe(0)
@@ -96,15 +97,15 @@ describe('departure workflow', () => {
   })
   it('holds position without losing the assigned runway and can resume taxi', () => {
     let s = send(createSession(), 'MAS612, pushback approved')
-    s = advance(s, 35)
-    s = send(s, 'MAS612, taxi runway 32R via A')
+    s = advance(s, 150)
+    s = send(s, 'MAS612, taxi runway 32R via T2 T3 F1 G B9 A A11')
     s = advance(s, 10)
     s = send(s, 'MAS612, hold position')
     const position = { ...s.aircraft[0].position }
     s = advance(s, 20)
     expect(s.aircraft[0].position).toEqual(position)
-    s = send(s, 'MAS612, taxi runway 32R via A')
-    s = advance(s, 140)
+    s = send(s, 'MAS612, taxi runway 32R via T2 T3 F1 G B9 A A11')
+    s = advance(s, 650)
     expect(s.aircraft[0].phase).toBe('holding')
   })
 })
@@ -114,7 +115,7 @@ describe('arrival workflow', () => {
     const start = createSession()
     const s = advance(start, 20)
     const arrival = s.aircraft.find((a) => a.id === 'MAS1134')!
-    expect(arrival.position.y).toBe(750)
+    expect(arrival.position.y).toBeCloseTo(RUNWAYS['32L'].bottom + 70 * ARRIVAL_MODEL.approachSpeed)
     expect(arrival.phase).toBe('final')
     expect(arrival.runwayOccupied).toBe(false)
   })
@@ -152,7 +153,7 @@ describe('arrival workflow', () => {
     expect(s.events.some((e) => e.text.includes('runway 32L occupied'))).toBe(true)
   })
   it('does not skip an automatic go-around at 4× or during a large tick', () => {
-    const s = tick({ ...createSession(), running: true, speed: 4 }, 30)
+    const s = tick({ ...createSession(), running: true, speed: 4 }, 90)
     expect(s.aircraft.find((a) => a.id === 'MAS1134')!.phase).toBe('complete')
     expect(s.events.some((e) => e.text.includes('automatic go-around'))).toBe(true)
     expect(s.events.some((e) => e.text.includes('touchdown'))).toBe(false)
@@ -162,20 +163,20 @@ describe('arrival workflow', () => {
     s = send(s, 'MAS1134, runway 32L cleared to land', '118.500')
     expect(s.aircraft.find((a) => a.id === 'MAS1134')!.runwayOccupied).toBe(false)
     expect(s.aircraft.find((a) => a.id === 'MAS1134')!.landingCleared).toBe(true)
-    s = advance(s, 120)
+    s = advance(s, 180)
     const arrival = () => s.aircraft.find((a) => a.id === 'MAS1134')!
     expect(arrival().phase).toBe('vacated')
     expect(arrival().runwayOccupied).toBe(false)
     s = send(s, 'MAS1134, contact Ground 121.650', '118.500')
-    s = send(s, 'MAS1134, taxi to stand B10 via C')
-    s = advance(s, 100)
+    s = send(s, 'MAS1134, taxi to stand B10 via C D2 G F4 T4 T2')
+    s = advance(s, 700)
     expect(arrival().phase).toBe('complete')
     expect(s.completed).toBe(1)
   })
   it('goes around without recording an arrival at the stand', () => {
     let s = send(createSession(), 'MAS1134, go around', '118.500')
-    s = advance(s, 40)
-    expect(s.events.at(-1)?.text).toMatch(/go-around complete/)
+    s = advance(s, 240)
+    expect(s.events.some((e) => /go-around complete/.test(e.text))).toBe(true)
     expect(s.aircraft.find((a) => a.id === 'MAS1134')!.runwayOccupied).toBe(false)
   })
 })
@@ -183,12 +184,14 @@ describe('arrival workflow', () => {
 describe('instructor scenarios and evidence', () => {
   it('requires correction after a seeded readback error and preserves the issued runway', () => {
     let s = send(createSession('readback'), 'MAS612, pushback approved')
-    s = advance(s, 35)
-    s = send(s, 'MAS612, taxi runway 32R via A')
+    s = advance(s, 150)
+    s = send(s, 'MAS612, taxi runway 32R via T2 T3 F1 G B9 A A11')
     expect(s.aircraft[0].runway).toBe('32R')
     expect(s.aircraft[0].discrepancy).toEqual({ issued: '32R', readback: '32L' })
     expect(s.aircraft[0].phase).toBe('stopped')
-    expect(transmit(s, 'MAS612, taxi runway 32R via A', '121.650').error).toMatch(/discrepancy/)
+    expect(transmit(s, 'MAS612, taxi runway 32R via T2 T3 F1 G B9 A A11', '121.650').error).toMatch(
+      /discrepancy/,
+    )
     s = send(s, 'MAS612, negative, I say again runway 32R')
     expect(s.aircraft[0].discrepancy).toBeUndefined()
     expect(s.aircraft[0].phase).toBe('taxiing')
@@ -215,7 +218,7 @@ describe('instructor scenarios and evidence', () => {
   it('does not mutate existing session state or historical snapshots', () => {
     const s = createSession()
     const before = JSON.stringify(s)
-    const next = advance(send(s, 'MAS612, pushback approved'), 40)
+    const next = advance(send(s, 'MAS612, pushback approved'), 150)
     expect(JSON.stringify(s)).toBe(before)
     expect(next.events[0].snapshot[0].phase).toBe('parked')
     expect(next.aircraft[0].phase).toBe('ready')
@@ -236,6 +239,8 @@ describe('instructor scenarios and evidence', () => {
     const exported = sessionExport({ ...createSession(), running: true })
     expect(exported.schema).toBe('vatsim-ai.session.v4')
     expect(exported.session.running).toBe(false)
-    expect(exported.limitations).toContain('Illustrative geometry')
+    expect(exported.limitations).toContain(
+      'Manually chart-transcribed geometry; professional validation pending',
+    )
   })
 })

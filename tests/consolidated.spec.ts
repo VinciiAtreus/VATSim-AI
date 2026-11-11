@@ -114,9 +114,9 @@ test('coordinates with a manual adjacent station before transferring radio owner
   }
   let session = createSession('', exercise)
   session = transmit(session, 'MAS612, pushback approved', '121.650').session
-  session = tick({ ...session, running: true }, 35)
-  session = transmit(session, 'MAS612, taxi runway 32R via A', '121.650').session
-  session = tick(session, 140)
+  session = tick({ ...session, running: true }, 150)
+  session = transmit(session, 'MAS612, taxi runway 32R via T2 T3 F1 G B9 A A11', '121.650').session
+  session = tick(session, 650)
   const buffer = Buffer.from(JSON.stringify(sessionExport(session)))
   await page.goto('/')
   await page.getByRole('button', { name: 'Saved sessions', exact: true }).click()

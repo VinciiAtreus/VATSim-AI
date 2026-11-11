@@ -1,6 +1,6 @@
 import { Clock3, Download, FileJson, HardDrive, LoaderCircle, Save, Upload } from 'lucide-react'
 import ModalShell from './ModalShell'
-import { SCENARIOS } from '../sim/airport'
+import { AIRPORT_DATA, SCENARIOS } from '../sim/airport'
 import { formatTime } from '../sim/engine'
 import type { SaveStatus } from '../hooks/useSession'
 import type { SavedSession } from '../storage/sessionStore'
@@ -29,6 +29,16 @@ export default function SessionLibrary({
   onImport,
   onRestore,
 }: Props) {
+  const exportOriginal = (saved: SavedSession) => {
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(saved.envelope, null, 2)], { type: 'application/json' }),
+    )
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `vatsim-ai-original-${saved.id}.json`
+    a.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
   const formatted = (date: string) =>
     new Intl.DateTimeFormat('en-SG', {
       day: '2-digit',
@@ -123,7 +133,17 @@ export default function SessionLibrary({
                     {saved.eventCount} events<span>·</span>
                     {formatted(saved.savedAt)}
                   </p>
+                  {saved.envelope.dataset !== AIRPORT_DATA.id && (
+                    <small>Older dataset · original retained; replay in the previous build</small>
+                  )}
                 </div>
+                <button
+                  className="secondary-button"
+                  onClick={() => exportOriginal(saved)}
+                  aria-label={`Export original ${exercise?.title ?? 'saved exercise'}`}
+                >
+                  Export original
+                </button>
                 <button
                   className="secondary-button"
                   onClick={() => onRestore(saved)}
@@ -144,8 +164,9 @@ export default function SessionLibrary({
       )}
       <p className="library-footnote">
         Storage is local to this browser and website address. Clearing site data removes local
-        checkpoints. Import supports this build and version 0.1 exports, up to 10 MB and 2,500
-        events. Records are not authenticated assessment evidence.
+        checkpoints. Import requires a compatible airport dataset, up to 10 MB and 2,500 events.
+        Older schematic records can be exported unchanged and replayed in the previous build.
+        Records are not authenticated assessment evidence.
       </p>
     </ModalShell>
   )

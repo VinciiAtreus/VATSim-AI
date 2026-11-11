@@ -1,18 +1,19 @@
+import { chart, STANDS, PUSHBACK, NODES, DEPARTURE_ROUTES, knotsToUnitsPerSecond } from './geometry'
 import type { Aircraft, Frequency, Point, RunwayId } from './types'
 
-// Deliberately illustrative geometry. Never import this as an operational airport dataset.
+// Chart-local, manually transcribed geometry; never an operational airport dataset.
 export const AIRPORT_DATA = {
-  id: 'wmkk-schematic-0.1',
-  status: 'illustrative-unverified',
+  id: 'wmkk-caam-trace-0.2',
+  status: 'chart-transcribed-unvalidated',
   title: 'WMKK · Kuala Lumpur International',
-  note: 'Schematic geometry and demonstration routes. Not validated for operational or approved training use.',
+  note: 'CAAM chart-transcribed geometry; bounded routes. Not professionally validated or approved for training use.',
   sourceRegister: 'docs/SOURCE_REGISTER.md',
 } as const
 
-// Exercise timing in schematic display units; not a CAAM decision-height or minima model.
+// Constant-speed exercise kinematics. Decision time is an exercise policy, not CAAM minima.
 export const ARRIVAL_MODEL = {
-  approachSpeed: 1.5,
-  decisionOffset: 25,
+  approachSpeed: knotsToUnitsPerSecond(130),
+  decisionOffset: knotsToUnitsPerSecond(130) * (50 / 3),
   shortFinalSeconds: 20,
 } as const
 
@@ -41,36 +42,36 @@ export const RUNWAYS: Record<
   }
 > = {
   '33': {
-    x: 265,
-    top: 110,
-    bottom: 630,
+    x: chart(460, 0).x,
+    top: chart(460, 1020).y,
+    bottom: chart(460, 1780).y,
     opposite: '15',
     frequency: '119.800',
-    hold: { x: 325, y: 585 },
-    entry: { x: 265, y: 585 },
-    route: 'Z',
+    hold: NODES.Y9,
+    entry: NODES.R33,
+    route: DEPARTURE_ROUTES['33'],
     ground: '118.050',
   },
   '32L': {
-    x: 580,
-    top: 75,
-    bottom: 645,
+    x: chart(870, 0).x,
+    top: chart(870, 1160).y,
+    bottom: chart(870, 1950).y,
     opposite: '14R',
     frequency: '118.500',
-    hold: { x: 635, y: 600 },
-    entry: { x: 580, y: 600 },
-    route: 'C',
+    hold: NODES.C11,
+    entry: NODES.R32L,
+    route: DEPARTURE_ROUTES['32L'],
     ground: '121.650',
   },
   '32R': {
-    x: 925,
-    top: 75,
-    bottom: 645,
+    x: chart(1338, 0).x,
+    top: chart(1338, 620).y,
+    bottom: chart(1338, 1420).y,
     opposite: '14L',
     frequency: '118.800',
-    hold: { x: 870, y: 600 },
-    entry: { x: 925, y: 600 },
-    route: 'A',
+    hold: NODES.A11,
+    entry: NODES.R32R,
+    route: DEPARTURE_ROUTES['32R'],
     ground: '121.650',
   },
 }
@@ -172,7 +173,7 @@ export function initialAircraft(scenarioId: string): Aircraft[] {
       destination: 'WSSS',
       operation: 'departure',
       phase: 'parked',
-      position: { x: 770, y: 340 },
+      position: STANDS.B6,
       runway: '32R',
       frequency: '121.650',
     },
@@ -186,7 +187,7 @@ export function initialAircraft(scenarioId: string): Aircraft[] {
       destination: 'WMKP',
       operation: 'departure',
       phase: 'ready',
-      position: { x: 400, y: 440 },
+      position: PUSHBACK.Q4,
       runway: '33',
       frequency: '118.050',
     },
@@ -200,7 +201,10 @@ export function initialAircraft(scenarioId: string): Aircraft[] {
       destination: 'WMKK',
       operation: 'arrival',
       phase: 'final',
-      position: { x: 580, y: 780 },
+      position: {
+        x: RUNWAYS['32L'].x,
+        y: RUNWAYS['32L'].bottom + 90 * ARRIVAL_MODEL.approachSpeed,
+      },
       runway: '32L',
       frequency: '118.500',
       clearance: 'Established final · awaiting landing clearance',
@@ -217,7 +221,7 @@ export function initialAircraft(scenarioId: string): Aircraft[] {
       destination: 'WBGG',
       operation: 'departure',
       phase: 'parked',
-      position: { x: 770, y: 390 },
+      position: STANDS.B8,
       runway: '32R',
       frequency: '121.650',
     },

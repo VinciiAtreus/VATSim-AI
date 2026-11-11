@@ -1,5 +1,11 @@
 # VATSIM AI — session handover
 
+## Map update continuation, 11 November 2026
+
+The newly selected environment applied the requested chart domains and fresh requests succeeded. Charts were retrieved, including the newer 3 November 2026 CAAM edition. The map/routing update is documented in [WMKK_GEOMETRY.md](WMKK_GEOMETRY.md), with exact source hashes in [WMKK_CHART_SOURCES.json](WMKK_CHART_SOURCES.json). Engine 0.5.0 / dataset `wmkk-caam-trace-0.2` replaces the old paths together with the drawing. Existing records are retained and exportable unchanged; incompatible schematic coordinates are rejected explicitly. PR #4 remains the existing draft review vehicle, unmerged. Local checks: 100 unit tests, 30 Chromium browser tests, production build, formatting and diff checks passed; screenshots inspected. The earlier handover below is historical context.
+
+---
+
 Prepared 11 November 2026 (Asia/Singapore). Read this before changing the project. This document records the state before the handover-only commit; refresh GitHub and the checkout when resuming.
 
 ## Immediate objective

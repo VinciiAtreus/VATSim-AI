@@ -1,3 +1,4 @@
+import { ARRIVAL_ROUTE } from './sim/geometry'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Activity,
@@ -165,7 +166,11 @@ function actionsFor(a: Aircraft): Action[] {
     ]
   if (a.phase === 'vacated')
     return [
-      { label: 'Taxi to stand', text: command(`taxi to stand ${a.stand} via C`), primary: true },
+      {
+        label: 'Taxi to stand',
+        text: command(`taxi to stand ${a.stand} via ${ARRIVAL_ROUTE}`),
+        primary: true,
+      },
     ]
   return a.phase === 'complete' ? [] : [{ label: 'Standby', text: command('standby') }]
 }
@@ -874,7 +879,7 @@ export default function App() {
             <button className="dataset-note" onClick={() => setModal('settings')}>
               <Info size={14} />
               <span>
-                Schematic airport data<small>Procedure validation pending</small>
+                CAAM chart trace<small>Procedure validation pending</small>
               </span>
               <ChevronRight size={13} />
             </button>
@@ -1628,7 +1633,7 @@ export default function App() {
         >
           <p className="modal-intro">
             Focused exercises for developing the controller workflow. Each uses the same
-            illustrative airport dataset.
+            chart-transcribed, professionally unvalidated airport dataset.
           </p>
           <div className="builder-toolbar">
             <button
@@ -1784,7 +1789,7 @@ export default function App() {
                 ['Acknowledge', 'standby'],
                 ['Correct readback', `negative, I say again runway ${selected.runway}`],
                 ['Transfer to ground', `contact Lumpur Ground ${RUNWAYS[selected.runway].ground}`],
-                ['Taxi to arrival stand', `taxi to stand ${selected.stand} via C`],
+                ['Taxi to arrival stand', `taxi to stand ${selected.stand} via ${ARRIVAL_ROUTE}`],
               ].map(([label, text]) => (
                 <button
                   key={label}
@@ -1823,7 +1828,7 @@ export default function App() {
               </div>
               <p className="muted-small">
                 For MAS1134: select 118.500, issue landing clearance, wait for runway vacation,
-                transfer to 121.650, then taxi to B10 via C.
+                transfer to 121.650, then taxi to B10 via C D2 G F4 T4 T2.
               </p>
             </div>
           </div>
@@ -1996,7 +2001,7 @@ export default function App() {
               </div>
               <div>
                 <dt>Validation</dt>
-                <dd className="amber-text">Illustrative · unverified</dd>
+                <dd className="amber-text">Chart-transcribed · unvalidated</dd>
               </div>
               <div>
                 <dt>Simulation</dt>
