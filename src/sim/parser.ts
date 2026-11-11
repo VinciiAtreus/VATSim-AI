@@ -22,9 +22,12 @@ const phonetics: Record<string, string> = {
   charlie: 'c',
   zulu: 'z',
 }
-function normalize(text: string) {
+export function normalize(text: string) {
   return text
     .toLowerCase()
+    .replace(/-/g, ' ')
+    .replace(/\bstart up\b/g, 'startup')
+    .replace(/\bmalindo\b/g, 'mxd')
     .replace(/\bmalaysian\b/g, 'mas')
     .replace(/\bair\s?asia\b/g, 'axm')
     .replace(/\bbatik(?:\s+air)?\b/g, 'mxd')
@@ -36,6 +39,8 @@ function normalize(text: string) {
     .replace(/\b(right|left)\b/g, (word) => (word === 'right' ? 'r' : 'l'))
     .replace(/(?<=\d)\s+(?=\d)/g, '')
     .replace(/(?<=\d)\s+(?=[rl]\b)/g, '')
+    .replace(/(?<=\b[a-z])\s+(?=\d)/g, '')
+    .replace(/\s*\bdecimal\b\s*/g, '.')
     .replace(/\b(mas|axm|mxd)\s+(?=\d)/g, '$1')
     .replace(/[,;!]/g, ' ')
     .replace(/\.(?!\d)/g, ' ')
@@ -56,7 +61,10 @@ export function parseTransmission(input: string, aircraft: Aircraft[]): ParseRes
   const a = aircraft.find((item) => item.id.toLowerCase() === callsigns[0])
   if (!a)
     return { ok: false, error: `Callsign ${callsigns[0].toUpperCase()} is not in this exercise.` }
-  const body = text.replace(callsigns[0], '').trim()
+  const body = text
+    .replace(callsigns[0], '')
+    .trim()
+    .replace(/^wind \d{3} degrees \d{1,2} knots\s+/, '')
   const runwayMatches = [...body.matchAll(/\brunway\s*(\d{2}[rl]?)\b/g)].map((m) =>
     m[1].toUpperCase(),
   )
@@ -76,6 +84,10 @@ export function parseTransmission(input: string, aircraft: Aircraft[]): ParseRes
     return { ok: true, command: { type: 'pushback', aircraftId } }
   if (/^(?:hold position|stop immediately)$/.test(body))
     return { ok: true, command: { type: 'hold', aircraftId } }
+  if (/^continue taxi$/.test(body)) return { ok: true, command: { type: 'continue', aircraftId } }
+  if (/^say again$/.test(body)) return { ok: true, command: { type: 'sayagain', aircraftId } }
+  if (runway && /^hold short(?: of)? runway\s*\d{2}[rl]?$/.test(body))
+    return { ok: true, command: { type: 'holdshort', aircraftId, runway } }
   if (/^stand\s?by$/.test(body)) return { ok: true, command: { type: 'standby', aircraftId } }
   if (/^go around$/.test(body)) return { ok: true, command: { type: 'goaround', aircraftId } }
   if (runway && /^negative\s+(?:i say again\s+)?runway\s*\d{2}[rl]?$/.test(body))
@@ -92,10 +104,18 @@ export function parseTransmission(input: string, aircraft: Aircraft[]): ParseRes
       }
     return { ok: true, command: { type: 'handoff', aircraftId, frequency } }
   }
+  const holding = body.match(/holding point ([a-z]\d+)/)?.[1].toUpperCase()
+  const expectedHold = a.runway === '32R' ? 'A1' : a.runway === '33' ? 'Y1' : 'C1'
+  if (holding && holding !== expectedHold)
+    return {
+      ok: false,
+      error: `Holding point ${holding} does not match the schematic route (${expectedHold}). Nothing applied.`,
+    }
+  const taxiBody = body.replace(/holding point [a-z]\d+\s+/, '')
   if (
     runway &&
     /^taxi (?:to (?:holding point )?)?runway\s*\d{2}[rl]? via [a-z](?: hold short(?: of)? runway\s*\d{2}[rl]?)?$/.test(
-      body,
+      taxiBody,
     )
   ) {
     const via = body.match(/via ([a-z])/)![1].toUpperCase()

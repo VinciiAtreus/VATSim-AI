@@ -7,20 +7,15 @@ test('controller selects an aircraft, transmits, and inspects a historical snaps
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Kuala Lumpur International' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'WMKK KUALA LUMPUR' })).toBeVisible()
   await page.getByRole('button', { name: 'Start exercise', exact: true }).click()
   await page.getByRole('button', { name: 'Approve pushback' }).click()
-  await expect(page.getByRole('textbox', { name: 'Controller transmission' })).toHaveValue(
-    'MAS612, pushback approved',
-  )
-  await page.getByRole('button', { name: 'Transmit clearance' }).click()
   await expect(page.getByRole('log', { name: 'Radio transcript' })).toContainText(
     'Pushback approved, Malaysian six one two.',
   )
   await page.getByRole('button', { name: 'Select MAS1134' }).click()
   await page.getByRole('button', { name: 'Switch to 118.500' }).click()
   await page.getByRole('button', { name: 'Clear to land' }).click()
-  await page.getByRole('button', { name: 'Transmit clearance' }).click()
   await expect(page.getByRole('log', { name: 'Radio transcript' })).toContainText('cleared to land')
   await page.getByRole('button', { name: 'Session debrief', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText('Instructions applied')
@@ -139,15 +134,18 @@ test('scenario selection, instructor event, search, and export are functional', 
   page,
 }) => {
   await page.goto('/')
+  await page.getByLabel('Simulator menu').click()
   await page.getByRole('button', { name: 'Choose exercise', exact: true }).click()
   await page.getByRole('button', { name: /Readback discipline/ }).click()
+  await page.getByLabel('Simulator menu').click()
   await expect(page.getByText('Readback discipline', { exact: true })).toBeVisible()
+  await page.getByLabel('Simulator menu').click()
   await page.getByRole('button', { name: 'Instructor', exact: true }).click()
   await expect(page.getByRole('button', { name: /Incorrect runway readback/ })).toContainText(
     'Armed',
   )
   await page.getByRole('button', { name: /Runway obstruction/ }).click()
-  await expect(page.getByText('RWY OCCUPIED', { exact: true })).toBeVisible()
+  await expect(page.locator('.safety-line')).toContainText('RWY OCCUPIED')
   await page.getByRole('textbox', { name: 'Search flight strips' }).fill('AXM')
   await expect(page.getByRole('button', { name: 'Select AXM518' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Select MAS612' })).toHaveCount(0)
@@ -303,7 +301,7 @@ test('compact desktop keeps the transmission box above the status bar after reco
     page.getByText('Previous exercise restored paused. Resume when you are ready.'),
   ).toBeVisible()
   const command = await page.locator('.command-form').boundingBox()
-  const footer = await page.locator('.status-bar').boundingBox()
+  const footer = await page.locator('.equipment-footer').boundingBox()
   expect(command!.y + command!.height).toBeLessThanOrEqual(footer!.y)
 })
 
@@ -365,7 +363,11 @@ test('browser history beyond the file-import limit can recover and restore indep
   await expect(
     page.getByText('Previous exercise restored paused. Resume when you are ready.'),
   ).toBeVisible()
-  await expect(page.getByRole('button', { name: /WMKK–02 Departure fundamentals/ })).toBeVisible()
+  await page.getByLabel('Simulator menu').click()
+  await expect(page.getByRole('button', { name: 'Choose exercise' })).toContainText(
+    'Departure fundamentals',
+  )
+  await page.getByLabel('Simulator menu').click()
   await page.getByRole('button', { name: 'Saved sessions', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText(`${long.events.length + 1} events`)
   await page.getByRole('button', { name: 'Restore Departure fundamentals', exact: true }).click()
@@ -422,7 +424,11 @@ test('recovers a version 0.2 checkpoint with a migration notice and scripted def
   await expect(
     page.getByText(/Legacy checkpoint migrated to the current model with scripted pilots/),
   ).toBeVisible()
-  await expect(page.getByRole('button', { name: /WMKK–02 Departure fundamentals/ })).toBeVisible()
+  await page.getByLabel('Simulator menu').click()
+  await expect(page.getByRole('button', { name: 'Choose exercise' })).toContainText(
+    'Departure fundamentals',
+  )
+  await page.getByLabel('Simulator menu').click()
   await page.getByRole('button', { name: 'Instructor', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Take over MAS612', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Start exercise', exact: true })).toBeEnabled()

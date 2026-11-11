@@ -4,7 +4,7 @@
 
 ```text
 React workstation
-    │ typed transmission + selected frequency
+    │ browser speech / typed / click transmission + selected frequency
     ▼
 Structured parser ──► phase/frequency/route checks
     │
@@ -27,7 +27,7 @@ Session engine ──► aircraft state + scripted readback + event snapshot
 - `src/components/SessionLibrary.tsx`: checkpoint library and import controls.
 - `src/App.tsx`: local session orchestration, controller/instructor UI, dialogs and export/import.
 
-The browser timer advances the clock in small steps while running; a background tab automatically pauses the exercise. Movement values are display-space demonstration values, not physical performance models. A final approach progresses at 1.5 schematic units/second. The exercise decision point is 25 units before the runway threshold; absent clearance or an occupied runway causes a recorded automatic go-around. A cleared aircraft occupies the runway only at touchdown. Integration uses substeps no larger than one simulated second to avoid skipping transitions under acceleration. These are exercise model values, not published minima or validated aircraft dynamics.
+The browser timer feeds a fixed 10 Hz integrator with fractional carry while running; a background tab automatically pauses the exercise. Movement values are display-space demonstration values, not physical performance models. A final approach progresses at 1.5 schematic units/second. The exercise decision point is 25 units before the runway threshold; absent clearance or an occupied runway causes a recorded automatic go-around. A cleared aircraft occupies the runway only at touchdown. Integration uses exact 0.1 second steps to avoid skipping transitions under acceleration. These are exercise model values, not published minima or validated aircraft dynamics.
 
 Event snapshots are deep copied. A replay snapshot includes aircraft state and runway obstruction state; it does not regenerate pilot dialogue. Event inspection pauses the live session, disables clearance transmission, and displays historical aircraft details.
 
@@ -75,3 +75,7 @@ Each aircraft records its pilot mode, individual motion freeze, and optional que
 Pilot events include scripted/operator attribution. Instructor observations are separate note events linked to an earlier non-note event, with creation time retained separately from the target's timestamp. Replay follows that link to its historical snapshot. The codec checks these references and queued transmission identity, including historical snapshots. Version 0.2 checkpoints retain their IDs and gain scripted defaults. Version 0.1 uses the existing approach migration as well.
 
 `PilotStation.tsx` and `ObservationEditor.tsx` provide the local instructor controls. These are workstation roles, without authentication or multiuser isolation. See [release 0.3](RELEASE_0_3.md) for limitations and a review walkthrough.
+
+## November workstation overhaul
+
+See [overhaul implementation status](OVERHAUL_IMPLEMENTATION.md). `src/workstation/` owns strip bay/approach adapters, label placement, equipment tokens and the browser PTT/recognition adapter. Recognition results use the existing parser/validator. New events include optional UTC stamps; legacy events retain elapsed-time display. Held ground routes and the 10 Hz integrator remainder survive checkpoint decode. This does not replace snapshots with seeded event reconstruction.

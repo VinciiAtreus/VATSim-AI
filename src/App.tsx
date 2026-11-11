@@ -1,47 +1,40 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Activity,
-  ArrowDownLeft,
   ArrowRight,
   ArrowUpRight,
   BookOpen,
   Check,
   CheckCheck,
   ChevronDown,
-  ChevronRight,
   Clock3,
   Download,
-  FileText,
   Flag,
   Headphones,
-  HardDrive,
   FolderOpen,
   History,
   Info,
   Keyboard,
-  LayoutDashboard,
-  ListFilter,
   MessageSquare,
-  MoreHorizontal,
-  Pause,
   Plane,
-  Play,
   Radio,
-  Radar,
   RotateCcw,
   Route,
-  Search,
   Send,
   Settings2,
   ShieldCheck,
   SkipBack,
-  Square,
   Target,
   TriangleAlert,
   Volume2,
   VolumeX,
   X,
 } from 'lucide-react'
+import { readPreference, writePreference } from './workstation/preferences'
+import StripBay from './workstation/StripBay'
+import FinalApproach from './workstation/FinalApproach'
+import { useRadio } from './workstation/useRadio'
+import { holdingPoint, rfl, squawk, safetyAlerts, stopBarOff, utcTime } from './workstation/model'
 import AirportMap from './components/AirportMap'
 import ModalShell from './components/ModalShell'
 import SessionLibrary from './components/SessionLibrary'
@@ -51,14 +44,7 @@ import { useSession } from './hooks/useSession'
 import { MAX_SESSION_BYTES, decodeSession, forkSession, parseSessionFile } from './sim/sessionCodec'
 import { listSessions, type SavedSession } from './storage/sessionStore'
 import { ENGINE_VERSION } from './sim/version'
-import {
-  AIRPORT_DATA,
-  arrivalDecisionSeconds,
-  PHASE_LABELS,
-  RADIOS,
-  RUNWAYS,
-  SCENARIOS,
-} from './sim/airport'
+import { AIRPORT_DATA, PHASE_LABELS, RADIOS, RUNWAYS, SCENARIOS } from './sim/airport'
 import {
   createSession,
   formatTime,
@@ -88,6 +74,11 @@ function actionsFor(a: Aircraft): Action[] {
   if (a.phase === 'parked')
     return [
       { label: 'Approve pushback', text: command('pushback approved'), primary: true },
+      { label: 'Standby', text: command('standby') },
+    ]
+  if (a.phase === 'stopped' && a.heldFrom)
+    return [
+      { label: 'Continue taxi', text: command('continue taxi'), primary: true },
       { label: 'Standby', text: command('standby') },
     ]
   if (['ready', 'stopped', 'taxiing'].includes(a.phase) && a.operation === 'departure')
@@ -164,14 +155,50 @@ export default function App() {
   } | null>(null)
   const [selectedId, setSelectedId] = useState('MAS612')
   const [frequency, setFrequency] = useState<Frequency>('121.650')
-  const [filter, setFilter] = useState<'all' | 'departure' | 'arrival'>('all')
-  const [search, setSearch] = useState('')
   const [panel, setPanel] = useState<'aircraft' | 'instructor'>('aircraft')
   const [modal, setModal] = useState<Modal>(null)
   const [command, setCommand] = useState('')
   const [commandError, setCommandError] = useState('')
   const [toast, setToast] = useState('')
-  const [audio, setAudio] = useState(false)
+  const [audio, setAudio] = useState(() => readPreference('wmkk-audio') === 'true')
+  const [mode, setMode] = useState(() => readPreference('wmkk-mode') || 'night')
+  const [voiceInput, setVoiceInput] = useState(() => readPreference('wmkk-voice') === 'true')
+  const [pttBinding, setPttBinding] = useState(
+    () =>
+      readPreference('wmkk-ptt') || (/Mac/.test(navigator.platform) ? 'AltRight' : 'ControlRight'),
+  )
+  const [latch, setLatch] = useState(() => readPreference('wmkk-latch') === 'true')
+  const [phraseOnly, setPhraseOnly] = useState(() => readPreference('wmkk-phrase') === 'true')
+  const [utc, setUtc] = useState(() => new Date())
+  const [rx, setRx] = useState<Frequency[]>(RADIOS.map((r) => r.frequency))
+  const [busyFrequency, setBusyFrequency] = useState<Frequency | null>(null)
+  const [weather, setWeather] = useState(() => {
+    try {
+      return JSON.parse(readPreference('wmkk-weather') || '') as {
+        wind: string
+        qnh: string
+        atis: number
+      }
+    } catch {
+      return { wind: '320/05', qnh: '1012', atis: 0 }
+    }
+  })
+  useEffect(() => {
+    const timer = window.setInterval(() => setUtc(new Date()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+  useEffect(() => {
+    document.documentElement.dataset.mode = mode
+    writePreference('wmkk-mode', mode)
+  }, [mode])
+  useEffect(() => {
+    writePreference('wmkk-latch', String(latch))
+    writePreference('wmkk-audio', String(audio))
+    writePreference('wmkk-voice', String(voiceInput))
+    writePreference('wmkk-ptt', pttBinding)
+    writePreference('wmkk-phrase', String(phraseOnly))
+    writePreference('wmkk-weather', JSON.stringify(weather))
+  }, [audio, voiceInput, pttBinding, phraseOnly, weather, latch])
   const [allFrequencies, setAllFrequencies] = useState(false)
   const [replayIndex, setReplayIndex] = useState<number | null>(null)
   const [reviewFilter, setReviewFilter] = useState<
@@ -181,6 +208,8 @@ export default function App() {
   const commandInput = useRef<HTMLInputElement>(null)
   const transcriptEnd = useRef<HTMLDivElement>(null)
   const lastSpoken = useRef(0)
+  const lastBusyEvent = useRef('')
+  const busyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const pause = useCallback(() => {
     if (!ready) return
     update((s) =>
@@ -199,7 +228,7 @@ export default function App() {
       const elapsed = Math.min((now - last) / 1000, 1)
       last = now
       if (stateRef.current.running) update((s) => tick(s, elapsed))
-    }, 250)
+    }, 100)
     const visibility = () => {
       if (document.hidden && stateRef.current.running)
         update((s) =>
@@ -228,7 +257,7 @@ export default function App() {
     const latest = session.events.filter((e) => e.kind === 'pilot').at(-1)
     if (!latest || latest.id <= lastSpoken.current) return
     lastSpoken.current = latest.id
-    if (audio && 'speechSynthesis' in window) {
+    if (audio && session.running && rx.includes(latest.frequency!) && 'speechSynthesis' in window) {
       const voice = new SpeechSynthesisUtterance(
         latest.text
           .replace(/32R/g, 'three two right')
@@ -237,9 +266,12 @@ export default function App() {
       )
       voice.lang = 'en-GB'
       voice.rate = 1
+      const voices = window.speechSynthesis.getVoices().filter((v) => v.lang.startsWith('en'))
+      const aircraftIndex = session.aircraft.findIndex((a) => a.id === latest.aircraftId)
+      if (voices.length) voice.voice = voices[Math.max(0, aircraftIndex) % voices.length]
       window.speechSynthesis.speak(voice)
     }
-  }, [session.events, audio])
+  }, [session.events, audio, rx, session.running])
   useEffect(() => {
     const handle = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -257,9 +289,21 @@ export default function App() {
         e.altKey
       )
         return
-      if (e.code === 'Space' && !e.repeat && replayIndex === null) {
+      if (e.code === 'KeyP' && !e.repeat && replayIndex === null) {
         e.preventDefault()
         pause()
+      }
+      if (['Digit1', 'Digit2', 'Digit4'].includes(e.code))
+        update((s) => ({ ...s, speed: Number(e.code.slice(-1)) as 1 | 2 | 4 }))
+      if (['F1', 'F2', 'F3'].includes(e.key)) {
+        e.preventDefault()
+        setFrequency(RADIOS[Number(e.key.slice(1)) - 1].frequency)
+      }
+      if (e.key === 'Enter' && !e.repeat)
+        document.querySelector<HTMLButtonElement>('.clearance-primary')?.click()
+      if (e.code === 'KeyH' && !e.repeat) {
+        setCommand(`${selectedId}, hold position`)
+        commandInput.current?.focus()
       }
       if (e.key === '/') {
         e.preventDefault()
@@ -269,18 +313,13 @@ export default function App() {
     }
     window.addEventListener('keydown', handle)
     return () => window.removeEventListener('keydown', handle)
-  }, [pause, modal, replayIndex])
+  }, [pause, modal, replayIndex, update, selectedId])
 
   const scenario = SCENARIOS.find((s) => s.id === session.scenarioId)!
   const displayedAircraft =
     replayIndex === null ? session.aircraft : session.events[replayIndex].snapshot
   const selected = displayedAircraft.find((a) => a.id === selectedId) ?? displayedAircraft[0]
   const actions = actionsFor(selected)
-  const visibleAircraft = displayedAircraft.filter(
-    (a) =>
-      (filter === 'all' || a.operation === filter) &&
-      `${a.id} ${a.type} ${a.stand}`.toLowerCase().includes(search.toLowerCase()),
-  )
   const active = displayedAircraft.filter((a) => a.phase !== 'complete')
   const waiting = active.filter((a) => a.pending).length
   const issues = session.events.filter(
@@ -291,7 +330,7 @@ export default function App() {
     .filter(
       (e) =>
         ['controller', 'pilot'].includes(e.kind) &&
-        (allFrequencies || e.frequency === frequency) &&
+        (allFrequencies || rx.includes(e.frequency!)) &&
         (replayIndex === null || e.id <= session.events[replayIndex].id),
     )
     .slice(-40)
@@ -323,7 +362,7 @@ export default function App() {
     setCommandError('')
     commandInput.current?.focus()
   }
-  function send() {
+  function send(text = command) {
     if (!ready) {
       setCommandError('Wait for the saved exercise to finish loading.')
       return
@@ -336,7 +375,7 @@ export default function App() {
       setCommandError('Start or resume the exercise before transmitting.')
       return
     }
-    const result = transmit(stateRef.current, command, frequency)
+    const result = transmit(stateRef.current, text, frequency)
     update(() => result.session)
     if (result.error) setCommandError(result.error)
     else {
@@ -345,6 +384,61 @@ export default function App() {
     }
     commandInput.current?.focus()
   }
+  const radio = useRadio({
+    enabled: ready && session.running && replayIndex === null && !modal,
+    busy: busyFrequency === frequency,
+    text: command,
+    transmit: send,
+    notify: setToast,
+    voice: voiceInput,
+    binding: pttBinding,
+    latch,
+  })
+  useEffect(() => {
+    if (radio.capturedBinding) setPttBinding(radio.capturedBinding)
+  }, [radio.capturedBinding])
+  useEffect(() => {
+    const event = session.events.filter((e) => e.kind === 'pilot').at(-1)
+    if (!event) return
+    const key = `${session.id}:${event.id}`
+    if (lastBusyEvent.current === key) return
+    lastBusyEvent.current = key
+    if (!event.frequency || !rx.includes(event.frequency) || !session.running) return
+    clearTimeout(busyTimer.current)
+    setBusyFrequency(event.frequency)
+    busyTimer.current = setTimeout(
+      () => setBusyFrequency(null),
+      Math.min(6500, Math.max(1200, event.text.length * 38)),
+    )
+  }, [session.events.length, session.running, session.id, rx])
+  useEffect(() => {
+    if (!session.running) {
+      clearTimeout(busyTimer.current)
+      setBusyFrequency(null)
+    }
+  }, [session.running])
+  useEffect(() => () => clearTimeout(busyTimer.current), [])
+  const alerts = safetyAlerts(session)
+  const alertHistory = useRef<Map<string, string>>(new Map())
+  const alertSignature = alerts.map((a) => `${a.id}:${a.level}`).join('|')
+  useEffect(() => {
+    if (!ready || replayIndex !== null) return
+    const current = new Map(alerts.map((a) => [a.id, a.level]))
+    const started = alerts.filter((a) => alertHistory.current.get(a.id) !== a.level)
+    const ended = [...alertHistory.current.keys()].filter((id) => !current.has(id))
+    alertHistory.current = current
+    if (!started.length && !ended.length) return
+    update((s) => {
+      let next = s
+      for (const a of started)
+        next = record(next, 'instructor', `ALERT START ${a.id}: ${a.text}`, {
+          aircraftId: a.aircraftId,
+          severity: a.level === 'critical' ? 'critical' : 'attention',
+        })
+      for (const id of ended) next = record(next, 'system', `ALERT END ${id}`)
+      return next
+    })
+  }, [alertSignature, ready, replayIndex, update, session.id])
   async function loadScenario(id: string) {
     if (!ready) return
     if ((session.time > 0 || session.attempted > 0) && confirmScenario !== id) {
@@ -431,9 +525,21 @@ export default function App() {
     setToast('Exercise restored paused. Resume when ready.')
   }
   function exportSession() {
-    const blob = new Blob([JSON.stringify(sessionExport(stateRef.current), null, 2)], {
-      type: 'application/json',
-    })
+    const blob = new Blob(
+      [
+        JSON.stringify(
+          {
+            ...sessionExport(stateRef.current),
+            workstation: { mode, audio, voiceInput, pttBinding, phraseOnly, weather, latch },
+          },
+          null,
+          2,
+        ),
+      ],
+      {
+        type: 'application/json',
+      },
+    )
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -459,169 +565,65 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <aside className="nav-rail">
-        <a
-          className="brand-mark"
-          href="#"
-          onClick={(e) => e.preventDefault()}
-          aria-label="VATSIM AI workstation"
-        >
-          <svg viewBox="0 0 32 32">
-            <path
-              d="m6 8 10 19L26 8M12 8l4 8 4-8"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.7"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </a>
-        <div className="rail-links">
-          <button
-            className="rail-button selected"
-            aria-label="Controller workstation"
-            title="Controller workstation"
-            onClick={() => setModal(null)}
-          >
-            <LayoutDashboard size={20} />
-          </button>
-          <button
-            className="rail-button"
-            aria-label="Choose exercise"
-            title="Exercises"
-            onClick={() => {
-              setConfirmScenario(null)
-              setModal('scenarios')
-            }}
-          >
-            <Radar size={21} />
-          </button>
-          <button
-            className="rail-button"
-            aria-label="Saved sessions"
-            title="Saved exercises"
-            onClick={() => void openLibrary()}
-            disabled={!ready}
-          >
-            <FolderOpen size={20} />
-          </button>
-          <button
-            className="rail-button"
-            aria-label="Session debrief"
-            title="Session debrief"
-            onClick={() => setModal('debrief')}
-          >
-            <History size={20} />
-          </button>
-          <button
-            className="rail-button"
-            aria-label="Command reference"
-            title="Command reference (?)"
-            onClick={() => setModal('reference')}
-          >
-            <BookOpen size={20} />
-          </button>
-        </div>
-        <div className="rail-bottom">
-          <button
-            className="rail-button"
-            aria-label="Workstation settings"
-            onClick={() => setModal('settings')}
-          >
-            <Settings2 size={19} />
-          </button>
-          <span className="user-avatar" title="Local development session">
-            LC
-          </span>
-        </div>
-      </aside>
       <div className="workstation">
-        <header className="main-header">
-          <div className="product-title">
-            <span>
-              VATSIM <strong>AI</strong>
-            </span>
-            <span className="product-edition">CONTROLLER WORKSTATION</span>
-          </div>
-          <div className="header-breadcrumb">
-            <span>Training environment</span>
-            <ChevronRight size={13} />
-            <strong>WMKK</strong>
-          </div>
-          <span className="development-pill">
-            <span />
-            DEVELOPMENT PREVIEW
-          </span>
-          <div className="header-actions">
-            <button className="quiet-button" onClick={() => setModal('reference')}>
-              <BookOpen size={15} />
-              <span>Reference</span>
-              <kbd>?</kbd>
-            </button>
-            <button
-              className="icon-button"
-              aria-label={audio ? 'Disable pilot readback audio' : 'Enable pilot readback audio'}
-              onClick={toggleAudio}
-            >
-              {audio ? <Volume2 size={17} /> : <VolumeX size={17} />}
-            </button>
-            <span className="header-separator" />
-            <button
-              className={`local-session save-indicator ${saveStatus.state}`}
-              onClick={() => void openLibrary()}
-              aria-label="Local save status"
-              disabled={!ready}
-              title={saveStatus.error ?? 'Checkpoints are stored in this browser on this site.'}
-            >
-              <HardDrive size={12} />
-              {saveStatus.state === 'saved'
-                ? 'SAVED LOCALLY'
-                : saveStatus.state === 'saving'
-                  ? 'SAVING…'
-                  : saveStatus.state === 'loading'
-                    ? 'OPENING SESSION…'
-                    : 'SAVE UNAVAILABLE'}
-            </button>
-          </div>
-        </header>
-        <section className="session-bar" aria-label="Exercise controls">
-          <div className="airport-ident">
-            <span className="airport-code">WMKK</span>
+        <header className="position-bar">
+          <div className="position-ident">
+            <span className="position-mark">V</span>
             <div>
-              <h1>Kuala Lumpur International</h1>
-              <p>
-                <span>GROUND & TOWER</span>
-                <span className="sub-dot">·</span>RWY 32 / 33 configuration
-              </p>
+              <h1>WMKK KUALA LUMPUR</h1>
+              <p>Position: KL GND EAST + TWR (combined)</p>
             </div>
           </div>
-          <button
-            className="exercise-selector"
-            onClick={() => {
-              setConfirmScenario(null)
-              setModal('scenarios')
-            }}
-          >
-            <span className="exercise-icon">
-              <FileText size={17} />
-            </span>
-            <span>
-              <small>{scenario.code}</small>
-              <strong>{scenario.title}</strong>
-            </span>
-            <ChevronDown size={14} />
-          </button>
-          <div className="session-clock">
-            <Clock3 size={16} />
-            <span>{formatTime(replayEvent?.time ?? session.time)}</span>
-            <small>ELAPSED</small>
+          <div className="utc-clock">
+            <time>{utcTime(utc)}</time>
+            <span>UTC</span>
           </div>
-          <div className="playback">
+          <div className="weather-block">
+            <span>ATIS</span>
+            <strong className="atis-letter">{String.fromCharCode(65 + (weather.atis % 26))}</strong>
+            <label>
+              WIND<b>{weather.wind}</b>
+            </label>
+            <label>
+              QNH<b>{weather.qnh}</b>
+            </label>
+          </div>
+          <div className="runway-chips">
+            {(['32R', '33', '32L'] as const).map((id) => {
+              const occupants = displayedAircraft
+                .filter((a) => a.runway === id && a.runwayOccupied)
+                .map((a) => a.id)
+              if (session.blockedRunway === id) occupants.push('VEHICLE')
+              return (
+                <span key={id} className={`runway-chip ${occupants.length ? 'occupied' : ''}`}>
+                  <b>{id}</b> {id === '32L' ? 'ARR' : 'DEP'}{' '}
+                  <strong>{occupants.length ? `OCC ${occupants.join(' ')}` : 'CLEAR'}</strong>
+                </span>
+              )
+            })}
+          </div>
+          <div className="equipment-tools">
             <button
-              className={`play-button ${session.running ? 'running' : ''}`}
-              disabled={replayIndex !== null || !ready}
+              onClick={() => setMode(mode === 'night' ? 'day' : 'night')}
+              aria-label="Toggle day/night mode"
+            >
+              {mode === 'night' ? 'Day' : 'Night'}
+            </button>
+            <button aria-label="Command reference" onClick={() => setModal('reference')}>
+              <BookOpen size={16} />
+            </button>
+            <button aria-label="Session debrief" onClick={() => setModal('debrief')}>
+              <History size={16} />
+            </button>
+            <button aria-label="Workstation settings" onClick={() => setModal('settings')}>
+              <Settings2 size={16} />
+            </button>
+          </div>
+          <div className="simulator-corner" aria-label="Simulator controls">
+            <span>Simulator</span>
+            <button
               onClick={pause}
+              disabled={!ready || replayIndex !== null}
               aria-label={
                 session.running
                   ? 'Pause exercise'
@@ -630,219 +632,98 @@ export default function App() {
                     : 'Start exercise'
               }
             >
-              {session.running ? (
-                <Pause size={14} fill="currentColor" />
-              ) : (
-                <Play size={14} fill="currentColor" />
-              )}
-              <span>{session.running ? 'Pause' : session.time ? 'Resume' : 'Start exercise'}</span>
+              {session.running ? 'Pause' : session.time ? 'Resume' : 'Run'}
             </button>
-            <div className="speed-group" aria-label="Simulation speed">
-              {([1, 2, 4] as const).map((speed) => (
-                <button
-                  key={speed}
-                  aria-pressed={session.speed === speed}
-                  className={session.speed === speed ? 'active' : ''}
-                  onClick={() => update((s) => ({ ...s, speed }))}
-                  disabled={replayIndex !== null || !ready}
-                >
-                  {speed}×
-                </button>
-              ))}
-            </div>
+            {([1, 2, 4] as const).map((speed) => (
+              <button
+                key={speed}
+                aria-pressed={session.speed === speed}
+                onClick={() => update((s) => ({ ...s, speed }))}
+              >
+                {speed}×
+              </button>
+            ))}
             <button
-              className="icon-button end-button"
-              aria-label="Pause and open debrief"
-              title="Pause and debrief"
               onClick={() => {
-                if (session.running) pause()
-                setModal('debrief')
+                setConfirmScenario(session.scenarioId)
+                setModal('scenarios')
               }}
             >
-              <Square size={13} />
+              Reset
             </button>
-          </div>
-        </section>
-        {notice && (
-          <div className="continuity-notice" role="status">
-            <HardDrive size={14} />
-            <span>{notice}</span>
-            <button onClick={dismissNotice} aria-label="Dismiss restore notice">
-              <X size={14} />
+            <span className="sim-elapsed">
+              T+{formatTime(session.time)} · MOV {session.completed}
+            </span>
+            <button aria-label="Saved sessions" onClick={() => void openLibrary()}>
+              Files
             </button>
-          </div>
-        )}
-        <main className="workspace-grid">
-          <aside className="traffic-panel" aria-label="Flight strips">
-            <div className="panel-heading">
+            <button
+              aria-label="Local save status"
+              onClick={() => void openLibrary()}
+              title={saveStatus.error}
+            >
+              {saveStatus.state === 'saved'
+                ? 'SAVED LOCALLY'
+                : saveStatus.state === 'error'
+                  ? 'SAVE UNAVAILABLE'
+                  : saveStatus.state.toUpperCase()}
+            </button>
+            <details>
+              <summary aria-label="Simulator menu">Menu</summary>
               <div>
-                <ListFilter size={16} />
-                <h2>Flight strips</h2>
-                <span className="count-badge">{active.length}</span>
-              </div>
-              <button
-                className="icon-button"
-                onClick={() => setSearch('')}
-                aria-label="Clear traffic search"
-                title="Clear traffic search"
-              >
-                <MoreHorizontal size={18} />
-              </button>
-            </div>
-            <div className="traffic-search">
-              <Search size={14} />
-              <input
-                aria-label="Search flight strips"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Callsign, aircraft or stand"
-              />
-              <kbd>/</kbd>
-            </div>
-            <div className="traffic-tabs">
-              {(['all', 'departure', 'arrival'] as const).map((f) => (
                 <button
-                  key={f}
-                  className={filter === f ? 'active' : ''}
-                  onClick={() => setFilter(f)}
-                >
-                  {f === 'all' ? 'All traffic' : f === 'departure' ? 'Departures' : 'Arrivals'}
-                  <span>
-                    {session.aircraft.filter((a) => f === 'all' || a.operation === f).length}
-                  </span>
-                </button>
-              ))}
-            </div>
-            <div className="strip-section-label">
-              <span>ACTIVE TRAFFIC</span>
-              <span>{waiting} awaiting</span>
-            </div>
-            <div className="flight-strip-list">
-              {visibleAircraft.map((a) => (
-                <button
-                  className={`flight-strip ${a.id === selected.id ? 'selected' : ''} ${a.operation}`}
-                  key={a.id}
-                  onClick={() => {
-                    setSelectedId(a.id)
-                    setPanel('aircraft')
+                  aria-label="Choose exercise"
+                  onClick={(e) => {
+                    e.currentTarget.closest('details')?.removeAttribute('open')
+                    setConfirmScenario(null)
+                    setModal('scenarios')
                   }}
-                  aria-label={`Select ${a.id}`}
-                  aria-pressed={a.id === selected.id}
                 >
-                  <div className="strip-top">
-                    <span className="strip-callsign">
-                      {a.operation === 'arrival' ? (
-                        <ArrowDownLeft size={15} />
-                      ) : (
-                        <ArrowUpRight size={15} />
-                      )}
-                      {a.id}
-                    </span>
-                    <span className="aircraft-type">
-                      {a.type}
-                      <small>/{a.wake}</small>
-                    </span>
-                    {a.pending && <span className="calling-dot" title="Pilot awaiting response" />}
-                  </div>
-                  <div className="strip-middle">
-                    <span>
-                      {a.operation === 'arrival' ? 'ARR WMKK' : a.destination}
-                      <span className="strip-mid-dot">·</span>
-                      {a.operation === 'arrival' ? 'STAND' : 'FROM'} {a.stand}
-                    </span>
-                    <strong>{a.runway}</strong>
-                  </div>
-                  <div className="strip-bottom">
-                    <span className={`phase-tag ${a.discrepancy ? 'warning' : ''}`}>
-                      {a.discrepancy ? 'CHECK READBACK' : PHASE_LABELS[a.phase]}
-                    </span>
-                    <span className="strip-frequency">{a.frequency}</span>
-                  </div>
-                  {a.pilotMode === 'operator' && (
-                    <div className="strip-operator-status">
-                      {a.motionPaused ? 'MOTION FROZEN' : 'PSEUDO-PILOT'}
-                      {a.queuedInstruction ? ' · INSTRUCTION PENDING' : ''}
-                    </div>
-                  )}
+                  {scenario.title}
                 </button>
-              ))}
-              {visibleAircraft.length === 0 && (
-                <div className="empty-state">
-                  <Search size={22} />
-                  <p>No matching aircraft</p>
-                  <button
-                    className="text-button"
-                    onClick={() => {
-                      setSearch('')
-                      setFilter('all')
-                    }}
-                  >
-                    Clear filters
-                  </button>
-                </div>
-              )}
-            </div>
-            <div className="traffic-summary">
-              <div>
-                <span className="legend-dot departure" />
-                Departures
-                <strong>{active.filter((a) => a.operation === 'departure').length}</strong>
+                <button onClick={exportSession}>Download JSON</button>
               </div>
-              <div>
-                <span className="legend-dot arrival" />
-                Arrivals<strong>{active.filter((a) => a.operation === 'arrival').length}</strong>
-              </div>
-            </div>
-            <div className="briefing-card">
-              <div>
-                <Target size={16} />
-                <span>EXERCISE OBJECTIVE</span>
-              </div>
-              <p>{scenario.objective}</p>
-              <button onClick={() => setModal('reference')}>
-                View command reference
-                <ArrowRight size={13} />
-              </button>
-            </div>
-            <button className="dataset-note" onClick={() => setModal('settings')}>
-              <Info size={14} />
-              <span>
-                Schematic airport data<small>Procedure validation pending</small>
-              </span>
-              <ChevronRight size={13} />
+            </details>
+          </div>
+        </header>
+        <div
+          className={`safety-line ${alerts.some((a) => a.level === 'critical') ? 'critical' : alerts.length ? 'caution' : ''}`}
+          aria-live="polite"
+        >
+          <span>RIMCAS / SYS</span>
+          {toast && <button onClick={() => setToast('')}>{toast}</button>}
+          {alerts.map((a) => (
+            <button key={a.id} onClick={() => a.aircraftId && setSelectedId(a.aircraftId)}>
+              {a.text}
             </button>
-          </aside>
+          ))}
+          {notice ? (
+            <button onClick={() => setModal('settings')}>{notice}</button>
+          ) : saveStatus.error ? (
+            <button onClick={() => setModal('settings')}>{saveStatus.error}</button>
+          ) : (
+            !alerts.length && <span>No alerts</span>
+          )}
+          {notice && (
+            <button
+              className="dismiss-system"
+              onClick={dismissNotice}
+              aria-label="Dismiss restore notice"
+            >
+              ×
+            </button>
+          )}
+        </div>
+        <main className="workspace-grid">
+          <StripBay
+            aircraft={displayedAircraft}
+            selected={selected.id}
+            onSelect={(id) => {
+              setSelectedId(id)
+              setPanel('aircraft')
+            }}
+          />
           <div className="centre-workspace">
-            {active.some((a) => a.phase === 'final') &&
-              (() => {
-                const arrival = active.find((a) => a.phase === 'final')!
-                const seconds = arrivalDecisionSeconds(arrival)!
-                return (
-                  <div
-                    className={`arrival-watch ${!arrival.landingCleared && seconds <= 20 ? 'urgent' : ''}`}
-                  >
-                    <Plane size={14} />
-                    <strong>{arrival.id}</strong>
-                    <span>FINAL {arrival.runway}</span>
-                    <span>
-                      {arrival.motionPaused
-                        ? 'MOTION FROZEN'
-                        : arrival.landingCleared
-                          ? 'LANDING CLEARED'
-                          : `${formatTime(seconds)} TO DECISION`}
-                    </span>
-                    <button
-                      onClick={() => {
-                        setSelectedId(arrival.id)
-                        setPanel('aircraft')
-                      }}
-                    >
-                      Select arrival
-                      <ArrowRight size={12} />
-                    </button>
-                  </div>
-                )
-              })()}
             <AirportMap
               aircraft={displayedAircraft}
               selected={selected.id}
@@ -856,6 +737,10 @@ export default function App() {
                   : session.events[replayIndex].blockedRunway
               }
               replay={replayIndex !== null}
+              wind={weather.wind}
+              criticalAircraft={alerts
+                .filter((a) => a.level === 'critical' && a.aircraftId)
+                .map((a) => a.aircraftId!)}
             />
             {replayIndex !== null && (
               <div className="replay-bar">
@@ -881,120 +766,132 @@ export default function App() {
                 </button>
               </div>
             )}
-            <section className="communications" aria-label="Radio communications">
-              <div className="communications-heading">
-                <div>
-                  <Radio size={15} />
-                  <h2>Communications</h2>
-                  <span className="comms-frequency">{frequency}</span>
-                </div>
-                <button
-                  className={`text-button ${allFrequencies ? 'lime-text' : ''}`}
-                  onClick={() => setAllFrequencies(!allFrequencies)}
-                >
-                  {allFrequencies ? 'All frequencies' : 'Active frequency'}
-                  <ChevronDown size={12} />
-                </button>
-              </div>
-              <div
-                className="transcript"
-                role="log"
-                aria-label="Radio transcript"
-                aria-live="polite"
+            <div className="lower-displays">
+              <FinalApproach aircraft={displayedAircraft} onSelect={setSelectedId} />
+              <section
+                className={`communications ${radio.transmitting ? 'transmitting' : ''}`}
+                aria-label="Radio communications"
               >
-                {messages.map((e) => (
-                  <div key={e.id} className={`transcript-row ${e.kind}`}>
-                    <time>{formatTime(e.time)}</time>
-                    <span className="transcript-speaker">
-                      {e.kind === 'controller' ? 'YOU' : e.aircraftId}
-                      {e.source === 'operator' && (
-                        <small className="operator-radio-tag">OPERATOR</small>
-                      )}
+                <div className="communications-heading">
+                  <div>
+                    <Radio size={15} />
+                    <h2>R/T log</h2>
+                    <span className="comms-frequency">
+                      {radio.transmitting ? 'TRANSMITTING' : 'TX'} {frequency}
                     </span>
-                    <p>{e.text}</p>
                   </div>
-                ))}
-                {messages.length === 0 && (
-                  <p className="transcript-empty">
-                    No transmissions on this frequency. Select an aircraft to check its assigned
-                    station.
-                  </p>
-                )}
-                <div ref={transcriptEnd} />
-              </div>
-              <div className="transmit-area">
-                <div className="radio-selector">
-                  <label>
-                    <Headphones size={14} />
-                    <span>TRANSMIT ON</span>
-                    <select
-                      aria-label="Transmit frequency"
-                      value={frequency}
+                  <button
+                    className={`text-button ${allFrequencies ? 'lime-text' : ''}`}
+                    onClick={() => setAllFrequencies(!allFrequencies)}
+                  >
+                    {allFrequencies ? 'All frequencies' : 'Active frequency'}
+                    <ChevronDown size={12} />
+                  </button>
+                </div>
+                <div
+                  className="transcript"
+                  role="log"
+                  aria-label="Radio transcript"
+                  aria-live="polite"
+                >
+                  {messages.map((e) => (
+                    <div key={e.id} className={`transcript-row ${e.kind}`}>
+                      <time>{e.utc ? utcTime(e.utc) : formatTime(e.time)}</time>
+                      <span className="transcript-speaker">
+                        {e.kind === 'controller'
+                          ? frequency.startsWith('121')
+                            ? 'GND'
+                            : 'TWR'
+                          : e.aircraftId}
+                        {e.source === 'operator' && (
+                          <small className="operator-radio-tag">OPERATOR</small>
+                        )}
+                      </span>
+                      <p>{e.text}</p>
+                    </div>
+                  ))}
+                  {messages.length === 0 && (
+                    <p className="transcript-empty">
+                      No transmissions on this frequency. Select an aircraft to check its assigned
+                      station.
+                    </p>
+                  )}
+                  <div ref={transcriptEnd} />
+                </div>
+                <div className="transmit-area">
+                  <div className="radio-selector">
+                    <label>
+                      <Headphones size={14} />
+                      <span>TRANSMIT ON</span>
+                      <select
+                        aria-label="Transmit frequency"
+                        value={frequency}
+                        onChange={(e) => {
+                          setFrequency(e.target.value as Frequency)
+                          setCommandError('')
+                        }}
+                      >
+                        {RADIOS.map((r) => (
+                          <option value={r.frequency} key={r.frequency}>
+                            {r.short} · {r.frequency}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <span className="scripted-label">
+                      <span className="live-dot" />
+                      {session.aircraft.some((a) => a.pilotMode === 'operator')
+                        ? 'Pseudo-pilot active'
+                        : 'Scripted pilots'}
+                    </span>
+                  </div>
+                  <form
+                    className={`command-form ${commandError ? 'has-error' : ''}`}
+                    onSubmit={(e) => {
+                      e.preventDefault()
+                      send()
+                    }}
+                  >
+                    <Keyboard size={17} />
+                    <input
+                      ref={commandInput}
+                      aria-label="Controller transmission"
+                      placeholder={`${selected.id}, ${selected.phase === 'parked' ? 'pushback approved' : 'enter an instruction…'}`}
+                      value={command}
                       onChange={(e) => {
-                        setFrequency(e.target.value as Frequency)
+                        setCommand(e.target.value)
                         setCommandError('')
                       }}
+                      autoComplete="off"
+                      spellCheck={false}
+                      disabled={replayIndex !== null || !ready}
+                    />
+                    <button
+                      type="submit"
+                      aria-label="Transmit clearance"
+                      disabled={!command.trim() || replayIndex !== null || !ready}
                     >
-                      {RADIOS.map((r) => (
-                        <option value={r.frequency} key={r.frequency}>
-                          {r.short} · {r.frequency}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <span className="scripted-label">
-                    <span className="live-dot" />
-                    {session.aircraft.some((a) => a.pilotMode === 'operator')
-                      ? 'Pseudo-pilot active'
-                      : 'Scripted pilots'}
-                  </span>
-                </div>
-                <form
-                  className={`command-form ${commandError ? 'has-error' : ''}`}
-                  onSubmit={(e) => {
-                    e.preventDefault()
-                    send()
-                  }}
-                >
-                  <Keyboard size={17} />
-                  <input
-                    ref={commandInput}
-                    aria-label="Controller transmission"
-                    placeholder={`${selected.id}, ${selected.phase === 'parked' ? 'pushback approved' : 'enter an instruction…'}`}
-                    value={command}
-                    onChange={(e) => {
-                      setCommand(e.target.value)
-                      setCommandError('')
-                    }}
-                    autoComplete="off"
-                    spellCheck={false}
-                    disabled={replayIndex !== null || !ready}
-                  />
-                  <button
-                    type="submit"
-                    aria-label="Transmit clearance"
-                    disabled={!command.trim() || replayIndex !== null || !ready}
-                  >
-                    <span>Transmit</span>
-                    <Send size={15} />
-                  </button>
-                </form>
-                {commandError ? (
-                  <p className="command-error" role="alert">
-                    <TriangleAlert size={12} />
-                    {commandError}
-                  </p>
-                ) : (
-                  <div className="command-help">
-                    <span>Typed radio · full callsign required</span>
-                    <button onClick={() => setModal('reference')}>
-                      Command reference
-                      <ArrowUpRight size={11} />
+                      <span>Transmit</span>
+                      <Send size={15} />
                     </button>
-                  </div>
-                )}
-              </div>
-            </section>
+                  </form>
+                  {commandError ? (
+                    <p className="command-error" role="alert">
+                      <TriangleAlert size={12} />
+                      {commandError}
+                    </p>
+                  ) : (
+                    <div className="command-help">
+                      <span>Typed radio · full callsign required</span>
+                      <button onClick={() => setModal('reference')}>
+                        Command reference
+                        <ArrowUpRight size={11} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </section>
+            </div>
           </div>
           <aside className="inspector-panel">
             <div className="inspector-tabs">
@@ -1016,156 +913,221 @@ export default function App() {
             </div>
             {panel === 'aircraft' ? (
               <>
-                <div className="aircraft-profile">
-                  <div className="profile-eyebrow">
-                    <span>SELECTED AIRCRAFT</span>
-                    <span className={`operation-label ${selected.operation}`}>
-                      {selected.operation === 'arrival' ? 'INBOUND' : 'OUTBOUND'}
-                    </span>
+                <div className="selected-equipment">
+                  <div className="selected-title">
+                    <h2>{selected.id}</h2>
+                    <span>{selected.operation === 'departure' ? 'OUTBOUND' : 'INBOUND'}</span>
                   </div>
-                  <div className="profile-title">
-                    <div>
-                      <h2>{selected.id}</h2>
-                      <p>{selected.spoken}</p>
-                    </div>
-                    <div className="plane-avatar">
-                      <Plane size={27} strokeWidth={1.2} />
-                    </div>
+                  <p>
+                    {selected.spoken} · {selected.type}/{selected.wake}
+                  </p>
+                  <dl className="selected-data">
+                    {[
+                      ['DEST', selected.destination],
+                      ['RWY', selected.runway],
+                      ['STAND', selected.stand],
+                      ['SSR', squawk(selected)],
+                      ['GS', `${selected.speed} KT`],
+                      ['RFL', rfl(selected)],
+                    ].map(([label, value]) => (
+                      <div key={label}>
+                        <dt>{label}</dt>
+                        <dd>{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <div className="phase-ladder">
+                    {(selected.operation === 'departure'
+                      ? ['STAND', 'PUSH', 'TAXI', 'HOLD', 'LINE UP', 'T/O']
+                      : ['FINAL', 'CLEARED', 'LAND', 'TAXI IN', 'BLOCKS']
+                    ).map((phase, index) => {
+                      const current =
+                        selected.operation === 'departure'
+                          ? (
+                              {
+                                parked: 0,
+                                pushback: 1,
+                                ready: 1,
+                                taxiing: 2,
+                                stopped: 2,
+                                holding: 3,
+                                'lining-up': 4,
+                                'lined-up': 4,
+                                departing: 5,
+                                complete: 5,
+                              } as Record<string, number>
+                            )[selected.phase]
+                          : selected.phase === 'final'
+                            ? Number(!!selected.landingCleared)
+                            : selected.phase === 'landing'
+                              ? 2
+                              : selected.phase === 'complete'
+                                ? 4
+                                : 3
+                      return (
+                        <span key={phase} className={current === index ? 'current' : ''}>
+                          {phase}
+                        </span>
+                      )
+                    })}
                   </div>
-                  <div className="profile-type">
-                    <span>
-                      {selected.type === 'B738'
-                        ? 'Boeing 737-800'
-                        : selected.type === 'A320'
-                          ? 'Airbus A320'
-                          : 'Airbus A330-300'}
-                    </span>
-                    <span>{selected.wake === 'H' ? 'HEAVY' : 'MEDIUM'}</span>
-                  </div>
-                </div>
-                <div className="aircraft-data">
-                  <div>
-                    <span>PHASE</span>
-                    <strong className="phase-value">
-                      <span className="live-dot" />
-                      {PHASE_LABELS[selected.phase]}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>ASSIGNED RUNWAY</span>
-                    <strong>{selected.runway}</strong>
-                  </div>
-                  <div>
-                    <span>
-                      {selected.operation === 'arrival' ? 'ARRIVAL STAND' : 'DEPARTURE STAND'}
-                    </span>
-                    <strong>{selected.stand}</strong>
-                  </div>
-                  <div>
-                    <span>GROUND SPEED</span>
-                    <strong>
-                      {selected.speed}
-                      <small> KT</small>
-                    </strong>
-                  </div>
-                  <div>
-                    <span>DESTINATION</span>
-                    <strong>{selected.destination}</strong>
-                  </div>
-                  <div>
-                    <span>RADIO FREQUENCY</span>
-                    <strong>{selected.frequency}</strong>
-                  </div>
-                </div>
-                <div className="clearance-card">
-                  <span className="eyebrow">
-                    <FileText size={13} />
-                    CURRENT CLEARANCE
-                  </span>
-                  <p>{selected.clearance}</p>
-                  {selected.pilotMode === 'operator' && (
-                    <p className="pilot-status">
-                      PSEUDO-PILOT {selected.motionPaused ? '· MOTION FROZEN' : ''}
-                      {selected.queuedInstruction ? ' · INSTRUCTION PENDING' : ''}
-                    </p>
-                  )}
-                  {selected.phase === 'final' && (
-                    <div className={`approach-timer ${selected.landingCleared ? 'cleared' : ''}`}>
-                      <Clock3 size={13} />
-                      <span>
-                        {selected.landingCleared
-                          ? 'Landing clearance received'
-                          : `Exercise decision in ${formatTime(arrivalDecisionSeconds(selected)!)}`}
-                      </span>
-                    </div>
-                  )}
-                </div>
-                {selected.discrepancy && (
-                  <div className="readback-warning">
-                    <TriangleAlert size={16} />
-                    <div>
-                      <strong>Readback discrepancy</strong>
-                      <p>
-                        Issued {selected.discrepancy.issued} · read back{' '}
-                        {selected.discrepancy.readback}. A correction is required.
-                      </p>
-                    </div>
-                  </div>
-                )}
-                <div className="suggested-actions">
-                  <p className="eyebrow">SUGGESTED TRANSMISSIONS</p>
                   {selected.frequency !== frequency && selected.phase !== 'complete' && (
                     <button
                       className="switch-frequency"
-                      onClick={() => {
-                        setFrequency(selected.frequency)
-                        setToast(`Transmitting on ${selected.frequency}.`)
-                      }}
+                      onClick={() => setFrequency(selected.frequency)}
                     >
                       <Radio size={14} />
-                      <span>Switch to {selected.frequency}</span>
-                      <ArrowRight size={13} />
+                      Switch to {selected.frequency}
                     </button>
                   )}
-                  {actions.map((action) => (
-                    <button
-                      key={action.label}
-                      className={`suggested-action ${action.primary ? 'primary' : ''}`}
-                      onClick={() => prepare(action.text)}
-                      disabled={replayIndex !== null || !ready}
-                    >
-                      <span>
-                        {action.primary ? <MessageSquare size={15} /> : <Radio size={14} />}
+                  <div className="clearance-buttons">
+                    {actions.map((action) => (
+                      <button
+                        key={action.label}
+                        className={action.primary ? 'clearance-primary' : 'clearance-secondary'}
+                        disabled={
+                          replayIndex !== null || !ready || !session.running || radio.transmitting
+                        }
+                        onClick={() => (phraseOnly ? prepare(action.text) : send(action.text))}
+                      >
                         {action.label}
-                      </span>
-                      <ArrowUpRight size={14} />
-                    </button>
-                  ))}
-                  {actions.length === 0 && (
-                    <div className="completed-message">
-                      <CheckCheck size={18} />
-                      Aircraft exercise complete
-                    </div>
-                  )}
-                  <p className="suggestion-note">
-                    Select a suggestion to prepare it.
-                    <br />
-                    Review, then transmit on the correct frequency.
-                  </p>
-                </div>
-                <div className="instructor-prompt">
-                  <span className="instructor-avatar">
-                    <ShieldCheck size={18} />
-                  </span>
-                  <div>
-                    <strong>Your instructor station</strong>
-                    <p>Control events and review the session.</p>
-                    <button onClick={() => setPanel('instructor')}>
-                      Open instructor controls
-                      <ArrowRight size={12} />
-                    </button>
+                      </button>
+                    ))}
+                    {!actions.some((a) => a.primary) && (
+                      <button disabled className="clearance-primary">
+                        {selected.phase === 'departing'
+                          ? 'Take-off roll — monitor'
+                          : selected.phase === 'landing'
+                            ? 'Landing roll — monitor'
+                            : PHASE_LABELS[selected.phase]}
+                      </button>
+                    )}
                   </div>
+                  <p className="equipment-help">
+                    {phraseOnly
+                      ? 'Phrase training: prepare the instruction, then use PTT.'
+                      : `Transmits on ${frequency}. Pilot readbacks appear in the R/T log.`}
+                  </p>
+                  {selected.discrepancy && (
+                    <p className="readback-warning">
+                      CHECK READBACK · issued {selected.discrepancy.issued}, read back{' '}
+                      {selected.discrepancy.readback}
+                    </p>
+                  )}
                 </div>
+                <section className="ptt-equipment">
+                  <h3>Push to talk</h3>
+                  <button
+                    className={`ptt-button ${radio.transmitting ? 'tx' : ''}`}
+                    aria-label="Push to talk"
+                    aria-pressed={radio.transmitting}
+                    disabled={!session.running || replayIndex !== null || !ready}
+                    onPointerDown={(e) => {
+                      if (e.button !== 0) return
+                      e.preventDefault()
+                      e.currentTarget.setPointerCapture(e.pointerId)
+                      radio.press()
+                    }}
+                    onPointerUp={() => {
+                      if (!latch) radio.release()
+                    }}
+                    onPointerCancel={() => radio.release(true)}
+                    onLostPointerCapture={() => {
+                      if (!latch) radio.release(true)
+                    }}
+                    onKeyDown={(e) => {
+                      if (['Space', 'Enter'].includes(e.code)) {
+                        e.preventDefault()
+                        if (!e.repeat) radio.press()
+                      }
+                    }}
+                    onKeyUp={(e) => {
+                      if (['Space', 'Enter'].includes(e.code)) {
+                        e.preventDefault()
+                        if (!latch) radio.release()
+                      }
+                    }}
+                  >
+                    <span className="mic-symbol">♩</span>
+                    <span>
+                      <strong aria-live="polite">
+                        {!session.running
+                          ? 'Paused'
+                          : radio.transmitting
+                            ? 'TRANSMITTING'
+                            : radio.processing
+                              ? 'Processing…'
+                              : latch
+                                ? 'Press to talk'
+                                : 'Hold to talk'}
+                      </strong>
+                      <small>{frequency}</small>
+                    </span>
+                    <kbd>{pttBinding}</kbd>
+                  </button>
+                  <p className="equipment-help">
+                    {voiceInput
+                      ? 'Browser speech · hold to speak, release to send.'
+                      : 'Typed PTT · enter text in the R/T log, then hold and release.'}{' '}
+                    Window must have focus.
+                  </p>
+                  {radio.recognised && <p className="recognised-text">{radio.recognised}</p>}
+                </section>
+                <section className="vccs-equipment">
+                  <h3>Voice comms (VCCS)</h3>
+                  {RADIOS.map((r) => (
+                    <div
+                      className={`vccs-row ${frequency === r.frequency ? 'selected' : ''}`}
+                      key={r.frequency}
+                    >
+                      <button
+                        onClick={() => {
+                          if (!radio.transmitting) setFrequency(r.frequency)
+                        }}
+                        disabled={radio.transmitting}
+                        aria-label={`Transmit on ${r.short} ${r.frequency}`}
+                        aria-pressed={frequency === r.frequency}
+                      >
+                        <strong>KL {r.short}</strong>
+                        <span>{r.frequency}</span>
+                      </button>
+                      <button
+                        className={`rx-lamp ${rx.includes(r.frequency) ? 'enabled' : ''} ${busyFrequency === r.frequency ? 'lit' : ''}`}
+                        aria-label={`Receive ${r.short}`}
+                        aria-pressed={rx.includes(r.frequency)}
+                        onClick={() =>
+                          setRx((old) =>
+                            old.includes(r.frequency)
+                              ? old.filter((f) => f !== r.frequency)
+                              : [...old, r.frequency],
+                          )
+                        }
+                      >
+                        RX
+                      </button>
+                      <span
+                        className={`tx-lamp ${frequency === r.frequency ? 'selected' : ''} ${frequency === r.frequency && radio.transmitting ? 'lit' : ''}`}
+                      >
+                        TX
+                      </span>
+                    </div>
+                  ))}
+                </section>
+                <section className="stopbar-equipment">
+                  <h3>Stop bars</h3>
+                  <div>
+                    {(['32R', '33'] as const).map((runway) => (
+                      <span
+                        className={`stopbar-chip ${stopBarOff(displayedAircraft, runway) ? 'off' : ''}`}
+                        key={runway}
+                      >
+                        <i />
+                        {holdingPoint(runway)} · {runway}{' '}
+                        {stopBarOff(displayedAircraft, runway) ? 'OFF' : 'LIT'}
+                      </span>
+                    ))}
+                  </div>
+                </section>
               </>
             ) : (
               <div className="instructor-content">
@@ -1316,36 +1278,15 @@ export default function App() {
             </div>
           </aside>
         </main>
-        <footer className="status-bar">
-          <div>
-            <span className={`status-dot ${session.running ? 'running' : ''}`} />
-            <strong>
-              {replayIndex !== null
-                ? 'REPLAY'
-                : session.running
-                  ? 'EXERCISE RUNNING'
-                  : 'EXERCISE PAUSED'}
-            </strong>
-            <span className="status-divider" />
-            <span>{active.length} aircraft</span>
-            <span className="status-divider" />
-            <span>{waiting} awaiting response</span>
-          </div>
-          <div className="status-shortcuts">
-            <span>
-              <kbd>Space</kbd>Pause / resume
-            </span>
-            <span>
-              <kbd>/</kbd>Transmission
-            </span>
-            <span>
-              <kbd>?</kbd>Reference
-            </span>
-          </div>
-          <button onClick={exportSession}>
-            <Download size={12} />
-            Export session
-          </button>
+        <footer className="equipment-footer">
+          <span>
+            {active.length} aircraft · {waiting} awaiting response
+          </span>
+          <span>
+            <kbd>{pttBinding}</kbd> PTT · <kbd>P</kbd> Run/pause · <kbd>/</kbd> Free text ·{' '}
+            <kbd>?</kbd> Reference
+          </span>
+          <button onClick={exportSession}>Export session</button>
         </footer>
       </div>
       {toast && (
@@ -1676,6 +1617,107 @@ export default function App() {
           onClose={() => setModal(null)}
         >
           <div className="settings-section">
+            <h3>Display and voice</h3>
+            <div className="settings-row">
+              <span>Display mode</span>
+              <button
+                className="secondary-button"
+                onClick={() => setMode(mode === 'night' ? 'day' : 'night')}
+              >
+                {mode === 'night' ? 'Night' : 'Day'}
+              </button>
+            </div>
+            <div className="settings-row">
+              <span>
+                Browser speech recognition
+                <small>
+                  Chrome cloud processing; microphone permission required.{' '}
+                  {radio.supported ? 'Available in this browser.' : 'Unavailable in this browser.'}
+                </small>
+              </span>
+              <button
+                className="secondary-button"
+                disabled={!radio.supported}
+                aria-pressed={voiceInput}
+                onClick={() => setVoiceInput(!voiceInput)}
+              >
+                {voiceInput ? 'Enabled' : 'Disabled'}
+              </button>
+            </div>
+            <div className="settings-row">
+              <span>
+                PTT binding
+                <small>
+                  Keyboard, mouse button 4/5 or gamepad. Browser window must have focus.
+                </small>
+              </span>
+              <button
+                className="secondary-button"
+                onClick={() => radio.setBindingCapture(!radio.bindingCapture)}
+              >
+                {radio.bindingCapture ? 'Press a key or button…' : pttBinding}
+              </button>
+            </div>
+            <div className="settings-row">
+              <span>
+                Latching PTT
+                <small>
+                  Press once to talk, press again to send. Blur and the 30-second guard still
+                  cancel.
+                </small>
+              </span>
+              <button
+                className="secondary-button"
+                aria-pressed={latch}
+                onClick={() => setLatch(!latch)}
+              >
+                {latch ? 'Enabled' : 'Disabled'}
+              </button>
+            </div>
+            <div className="settings-row">
+              <span>
+                Show phrase only<small>Clearance buttons prepare text for PTT practice.</small>
+              </span>
+              <button
+                className="secondary-button"
+                aria-pressed={phraseOnly}
+                onClick={() => setPhraseOnly(!phraseOnly)}
+              >
+                {phraseOnly ? 'Enabled' : 'Disabled'}
+              </button>
+            </div>
+            <p>
+              Browser recognition does not provide AudioWorklet pre-roll or reliable phrase hints.
+              Airport geometry, radio assignments, holding points, squawks and flight levels are
+              exercise placeholders, unverified against the Malaysian AIP.
+            </p>
+          </div>
+          <div className="settings-section">
+            <h3>Weather / ATIS</h3>
+            <div className="settings-row">
+              <label>
+                Wind{' '}
+                <input
+                  aria-label="Weather wind"
+                  value={weather.wind}
+                  onChange={(e) =>
+                    setWeather((w) => ({ ...w, wind: e.target.value, atis: (w.atis + 1) % 26 }))
+                  }
+                />
+              </label>
+              <label>
+                QNH{' '}
+                <input
+                  aria-label="Weather QNH"
+                  value={weather.qnh}
+                  onChange={(e) =>
+                    setWeather((w) => ({ ...w, qnh: e.target.value, atis: (w.atis + 1) % 26 }))
+                  }
+                />
+              </label>
+            </div>
+          </div>
+          <div className="settings-section">
             <h3>
               <Activity size={17} />
               Development prototype
@@ -1722,8 +1764,8 @@ export default function App() {
               </div>
             </dl>
             <p>
-              {AIRPORT_DATA.note} No speech recognition, generative pilot AI, separation-minima
-              model, or professional assessment is implemented.
+              {AIRPORT_DATA.note} Browser speech recognition is optional. No generative pilot AI,
+              separation-minima model, or professional assessment is implemented.
             </p>
           </div>
           <div className="settings-section">
@@ -1733,7 +1775,7 @@ export default function App() {
             </h3>
             <div className="shortcut-list">
               <span>
-                Pause or resume<kbd>Space</kbd>
+                Pause or resume<kbd>P</kbd>
               </span>
               <span>
                 Focus transmission<kbd>/</kbd>

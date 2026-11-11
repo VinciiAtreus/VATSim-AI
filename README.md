@@ -2,7 +2,15 @@
 
 A WMKK controller-workstation development prototype for desktop browsers. Built with React, TypeScript, and Vite; configured for Vercel.
 
-**Development status:** schematic airport geometry, simplified movement, scripted pilots. Not validated or approved for professional ATC training. No speech recognition, external AI, live VATSIM integration, or operational separation model is implemented.
+**Development status:** schematic airport geometry, simplified movement, scripted pilots. Not validated or approved for professional ATC training. Optional Chrome browser speech recognition feeds the shared controller parser. No external pilot AI, live VATSIM integration, or operational separation model is implemented.
+
+## Workstation overhaul
+
+The position uses proximity-ordered paper flight strips, a schematic surface display, final approach view, runway/stop-bar status and independent TX/RX controls. Switch Day/Night from the top bar. The dashed **Simulator** corner contains Run/Pause, speed, reset, files and exercise selection.
+
+**PTT:** hold Right Ctrl (Right Option on macOS), then release to send. By default this sends the text explicitly entered in the R/T log. Enable **Browser speech recognition** in workstation settings to speak instead; Chrome may process speech in the cloud and will request microphone permission. Keyboard, mouse 4/5 and gamepad bindings can be captured in settings. Latching PTT and phrase-only practice are optional. PTT is disabled while paused; use **P** to run/pause. Space no longer pauses.
+
+See [implementation status and remaining acceptance work](docs/OVERHAUL_IMPLEMENTATION.md) for the delivered scope, data choices and test coverage. Full seeded replay, physical taxi routing/conflicts and radio-filtered audio remain future engine work.
 
 ## Instructor workflow
 
